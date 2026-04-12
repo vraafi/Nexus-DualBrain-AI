@@ -1,0 +1,27 @@
+# Secrets - JANGAN PERNAH commit!
+.env
+.env.nexus
+.env.local
+*.env
+
+# Runtime files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Database
+*.sqlite
+*.db
+*.sqlite3
+
+# Logs
+*.log
+nexus_healer.log
+nexus_main.log
+
+# Temp/build files
+temp_io_matrix/
+/home/*/FantasyExtraction_Roblox_TrueApex/
