@@ -5,31 +5,62 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-def run_video_generation(product_data):
+def generate_video_with_reflection(driver, wait, prompt, download_dir, video_index):
     """
-    Modul 2: Generasi Video Rotasi & Manajemen Prompt (Veo 3 / Seedream)
-    Menavigasi platform video, mengelola fallback, mengeksekusi 2 prompt,
-    mengunduh hasil, dan menutup tab sepenuhnya.
+    Eksekusi prompt, unduh, dan lakukan evaluasi diri (Reflection Loop).
+    Memeriksa keberadaan file dan memvalidasi file video (ukuran > 0 Byte).
     """
-    if not product_data:
-        print("Data produk kosong. Membatalkan Modul 2.")
-        return None
+    max_reflections = 2
+    for attempt in range(1, max_reflections + 1):
+        print(f"[{attempt}/{max_reflections}] Mengeksekusi Prompt {video_index}: {prompt}")
+        text_area = wait.until(EC.presence_of_element_located((By.XPATH, "//textarea | //input[@type='text']")))
+        text_area.clear()
+        text_area.send_keys(prompt)
 
+        submit_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'generate') or contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'create')]")))
+        submit_btn.click()
+
+        print(f"Menunggu video {video_index} selesai digenerate...")
+        time.sleep(30)
+
+        download_btn = wait.until(EC.element_to_be_clickable((By.XPATH, f"(//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'download') or contains(@class, 'download')])[{video_index}]")))
+        download_btn.click()
+        print(f"Memicu unduhan video {video_index}.")
+        time.sleep(10) # Waktu tunggu file tersimpan ke disk
+
+        # REFLECTION LOOP: Validasi file video terbaru
+        files = os.listdir(download_dir)
+        mp4_files = [os.path.join(download_dir, f) for f in files if f.endswith('.mp4')]
+
+        if mp4_files:
+            latest_file = max(mp4_files, key=os.path.getctime)
+            file_size = os.path.getsize(latest_file)
+            print(f"Reflection: Mengecek ukuran file {latest_file} -> {file_size} bytes")
+            if file_size > 10240: # Memastikan ukuran file > 10KB
+                print(f"Video {video_index} lolos evaluasi (ukuran valid). Output berhasil divalidasi.")
+                return latest_file
+            else:
+                print(f"Reflection Error: File video {video_index} terlalu kecil atau corrupted ({file_size} bytes). Re-planning dan mengulang pembuatan...")
+                os.remove(latest_file)
+        else:
+             print(f"Reflection Error: File video {video_index} tidak ditemukan setelah proses unduhan. Mengulang pembuatan...")
+
+    raise Exception(f"Gagal memproduksi video valid untuk prompt {video_index} setelah {max_reflections} reflection loop.")
+
+def attempt_video_generation(product_data, download_dir):
+    """
+    Eksekusi satu kali navigasi ke platform video AI dengan Reflection Loop
+    dan dynamic prompt integration.
+    """
     product_name = product_data.get("product_name", "Produk Default")
     keyword = product_data.get("promotion_keyword", "Promo")
 
-    # Prompt yang harus dieksekusi
-    prompt_1 = f"{product_name} {keyword} Cinematic product shot, studio lighting, macro lens, very slow and smooth pan."
-    prompt_2 = f"{product_name} {keyword} Dynamic fast motion, tracking shot, zoom out, natural lighting."
-
-    # Path untuk simpanan lokal video
-    download_dir = os.path.join(os.getcwd(), "downloads")
-    if not os.path.exists(download_dir):
-        os.makedirs(download_dir)
+    # Gunakan prompt dinamis dari Gemma jika ada, fallback ke string template
+    prompt_1 = product_data.get("video_prompt_1", f"{product_name} {keyword} Cinematic product shot, studio lighting, macro lens, very slow and smooth pan.")
+    prompt_2 = product_data.get("video_prompt_2", f"{product_name} {keyword} Dynamic fast motion, tracking shot, zoom out, natural lighting.")
 
     driver = None
     try:
-        # Konfigurasi browser agar bisa download otomatis ke folder lokal
         options = webdriver.ChromeOptions()
         options.add_argument('--headless')
         options.add_argument('--disable-gpu')
@@ -45,24 +76,20 @@ def run_video_generation(product_data):
         driver.set_page_load_timeout(60)
         wait = WebDriverWait(driver, 30)
 
-        # Prioritas pertama: Buka website Veo 3
         primary_url = "https://veo3.example.com"
         fallback_url = "https://seedream.example.com"
         target_url = primary_url
 
         print(f"Mencoba membuka situs utama: {target_url}")
         driver.get(target_url)
-        time.sleep(5)  # Tunggu loading halaman
+        time.sleep(5)
 
-        # Mengecek apakah ada indikasi error kuota/credit habis pada Veo 3
-        # Menggunakan pencarian text XPath sederhana untuk simulasi
         try:
             error_element = driver.find_element(By.XPATH, "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'quota') or contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'credit')]")
             print("Peringatan: Kuota/credit habis pada platform Veo 3.")
 
-            # Logika fallback: Tutup tab, otomatis buka website alternatif
             print("Melakukan fallback ke platform Seedream.")
-            driver.quit() # Menutup tab/browser penuh sebelum membuka alternatif
+            driver.quit()
 
             driver = webdriver.Chrome(options=options)
             driver.set_page_load_timeout(60)
@@ -73,53 +100,58 @@ def run_video_generation(product_data):
             time.sleep(5)
             print("Berhasil membuka platform alternatif.")
         except Exception:
-            print("Tidak ditemukan error kuota. Melanjutkan pada platform Veo 3.")
+            print("Tidak ditemukan error kuota. Melanjutkan.")
             pass
 
-        # Simulasi proses eksekusi Prompt 1
-        print(f"Mengeksekusi Prompt 1: {prompt_1}")
-        # Di skenario nyata, bagian ini akan mengetik prompt, menekan generate, dan menunggu video selesai
-        # Contoh representasi:
-        # text_area = wait.until(EC.presence_of_element_located((By.XPATH, "//textarea")))
-        # text_area.send_keys(prompt_1)
-        # submit_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Generate')]")
-        # submit_btn.click()
-        # Tunggu video jadi
-        time.sleep(10)
-
-        # Unduh hasil video 1
-        video_1_path = os.path.join(download_dir, "video1.mp4")
-        # Di skenario nyata, ini berupa klik tombol download. Kita simulasi buat file mp4 dummy
-        with open(video_1_path, "wb") as f:
-            f.write(b"dummy video content 1")
-        print("Video 1 berhasil diunduh.")
-
-        # Simulasi proses eksekusi Prompt 2
-        print(f"Mengeksekusi Prompt 2: {prompt_2}")
-        time.sleep(10)
-
-        # Unduh hasil video 2
-        video_2_path = os.path.join(download_dir, "video2.mp4")
-        # Di skenario nyata, ini berupa klik tombol download. Kita simulasi buat file mp4 dummy
-        with open(video_2_path, "wb") as f:
-            f.write(b"dummy video content 2")
-        print("Video 2 berhasil diunduh.")
+        video_1_path = generate_video_with_reflection(driver, wait, prompt_1, download_dir, 1)
+        video_2_path = generate_video_with_reflection(driver, wait, prompt_2, download_dir, 2)
 
         return [video_1_path, video_2_path]
 
     except Exception as e:
         print(f"Terjadi error atau halaman gagal dimuat di Modul 2: {e}")
-        return None
+        raise e
 
     finally:
-        # Wajib menutup tab browser sepenuhnya
         if driver is not None:
             try:
                 driver.quit()
-                print("Browser pada Modul 2 tertutup sepenuhnya setelah 2 unduhan selesai.")
+                print("Browser pada Modul 2 tertutup sepenuhnya. RAM terbebas.")
             except Exception as e:
                 print(f"Gagal menutup browser: {e}")
 
+def run_video_generation(product_data):
+    """
+    Fungsi wrapper yang mengatur retry logic secara penuh untuk Modul 2.
+    """
+    if not product_data:
+        print("Data produk kosong. Membatalkan Modul 2.")
+        return None
+
+    download_dir = os.path.join(os.getcwd(), "downloads")
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
+
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"--- Modul 2 Percobaan {attempt}/{max_retries} ---")
+            result = attempt_video_generation(product_data, download_dir)
+            print(f"Modul 2 Berhasil, file path: {result}")
+            return result
+        except Exception as e:
+            print(f"Modul 2 Percobaan {attempt} gagal.")
+            if attempt == max_retries:
+                print("Batas retry tercapai. Modul 2 dihentikan.")
+                return None
+            print("Melakukan driver.quit() secara otomatis (terhandle di finally), lalu retry dalam 3 detik...")
+            time.sleep(3)
+
 if __name__ == "__main__":
-    test_data = {"product_name": "Test", "promotion_keyword": "Sale"}
+    test_data = {
+        "product_name": "Test",
+        "promotion_keyword": "Sale",
+        "video_prompt_1": "Test Sale cinematic shot",
+        "video_prompt_2": "Test Sale dynamic shot"
+    }
     run_video_generation(test_data)
