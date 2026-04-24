@@ -23,15 +23,12 @@ def generate_completion_report(state):
         f.write(json.dumps(report) + "\n")
     print("\n--- Completion Report Tersimpan ---")
 
-def main():
+def run_single_cycle():
     """
-    Arsitektur kode HARUS sekuensial (bergantian murni).
-    Dilengkapi State Machine untuk auto-resume dan pembersihan RAM eksplisit.
+    Eksekusi satu siklus penuh workflow sekuensial.
+    Mengembalikan True jika sukses mencapai akhir atau perlu retry wajar,
+    atau False jika perlu break kritis.
     """
-    print("="*50)
-    print("Memulai Agentic Workflow secara Sekuensial (Otonom)")
-    print("="*50)
-
     state_manager.init_db()
     state = state_manager.get_state()
 
@@ -55,8 +52,8 @@ def main():
 
         product_data = run_research()
         if not product_data:
-            print("Modul 1 gagal. Menghentikan workflow untuk retry siklus berikutnya.")
-            sys.exit(1)
+            print("Modul 1 gagal. Menghentikan siklus ini.")
+            return False
 
         print(f"Hasil Modul 1: {product_data}")
         state_manager.update_state(current_module=2, product_data=product_data)
@@ -72,8 +69,8 @@ def main():
         video_paths = run_video_generation(product_data)
 
         if not video_paths:
-            print("Modul 2 gagal. Menghentikan workflow untuk retry siklus berikutnya.")
-            sys.exit(1)
+            print("Modul 2 gagal. Menghentikan siklus ini.")
+            return False
 
         print(f"Hasil Modul 2 (Path Video): {video_paths}")
         state_manager.update_state(current_module=3, video_paths=video_paths)
@@ -92,23 +89,58 @@ def main():
             state_manager.update_state(current_module=4, status="completed")
             final_state = state_manager.get_state()
             generate_completion_report(final_state)
-            print("\nWorkflow berhasil diselesaikan sepenuhnya.")
+            print("\nSiklus Workflow berhasil diselesaikan sepenuhnya.")
         else:
-            print("\nWorkflow selesai dengan error pada pengiriman Telegram. State tidak di-complete agar bisa di-resume.")
-            sys.exit(1)
+            print("\nSiklus selesai dengan error pada pengiriman Telegram. State tidak di-complete agar bisa di-resume.")
+            return False
 
-    # ---------------------------------------------------------
-    # Exit Criteria & Explicit Garbage Collection
-    # ---------------------------------------------------------
-    print("\nMelakukan pembersihan RAM eksplisit (Exit Criteria)...")
-    try:
-        del product_data
-        del video_paths
-        del state
-    except:
-        pass
-    gc.collect()
-    print("Memori RAM dibilas. Agen siap untuk hibernasi atau siklus selanjutnya.")
+    return True
+
+def main():
+    """
+    Arsitektur kode HARUS sekuensial (bergantian murni).
+    Dilengkapi State Machine untuk auto-resume, pembersihan RAM eksplisit, dan
+    Autonomous Scheduling (Loop 18/7) untuk pendinginan mesin.
+    """
+    print("="*50)
+    print("Memulai Agentic Workflow secara Sekuensial (Otonom 18/7 Loop)")
+    print("="*50)
+
+    cycle_count = 1
+    while True:
+        print(f"\n[{datetime.now().isoformat()}] --- MEMULAI ITERASI SIKLUS {cycle_count} ---")
+
+        try:
+            run_single_cycle()
+        except Exception as e:
+            print(f"Terjadi error tak terduga pada siklus {cycle_count}: {e}")
+
+        # ---------------------------------------------------------
+        # Exit Criteria & Explicit Garbage Collection
+        # ---------------------------------------------------------
+        print("\nMelakukan pembersihan RAM eksplisit (Exit Criteria)...")
+        gc.collect()
+        print("Memori RAM dibilas.")
+
+        # ---------------------------------------------------------
+        # Autonomous Scheduling (Pendinginan & Pembaruan Metrik)
+        # ---------------------------------------------------------
+        cooldown_seconds = 7200 # 2 Jam
+        print(f"Agen memasuki mode hibernasi/pendinginan selama {cooldown_seconds} detik (2 Jam).")
+        print("Hal ini memberi waktu bagi CPU i3 Gen 8 untuk istirahat dan metrik TikTok untuk diperbarui.")
+
+        # Sleep in intervals to allow handling interruptions gracefully
+        try:
+            for i in range(cooldown_seconds):
+                time.sleep(1)
+                if i > 0 and i % 600 == 0: # Print status setiap 10 menit
+                    print(f"Hibernasi: {i // 60} menit berlalu...")
+        except KeyboardInterrupt:
+            print("\nSiklus otonom dihentikan oleh user (Ctrl+C).")
+            break
+
+        cycle_count += 1
 
 if __name__ == "__main__":
+    # Menjalankan agen dalam mode otonom penuh
     main()

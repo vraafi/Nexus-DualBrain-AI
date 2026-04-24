@@ -36,11 +36,11 @@ def generate_video_with_reflection(driver, wait, prompt, download_dir, video_ind
             latest_file = max(mp4_files, key=os.path.getctime)
             file_size = os.path.getsize(latest_file)
             print(f"Reflection: Mengecek ukuran file {latest_file} -> {file_size} bytes")
-            if file_size > 0:
-                print(f"Video {video_index} lolos evaluasi. Output berhasil divalidasi.")
+            if file_size > 10240: # Memastikan ukuran file > 10KB
+                print(f"Video {video_index} lolos evaluasi (ukuran valid). Output berhasil divalidasi.")
                 return latest_file
             else:
-                print(f"Reflection Error: File video {video_index} corrupted (0 bytes). Re-planning dan mengulang pembuatan...")
+                print(f"Reflection Error: File video {video_index} terlalu kecil atau corrupted ({file_size} bytes). Re-planning dan mengulang pembuatan...")
                 os.remove(latest_file)
         else:
              print(f"Reflection Error: File video {video_index} tidak ditemukan setelah proses unduhan. Mengulang pembuatan...")
