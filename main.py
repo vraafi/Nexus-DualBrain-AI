@@ -8,6 +8,7 @@ from browser_agent import BrowserAgent
 from tiktok_veo_workflow import TikTokVeoWorkflow
 from freelance_workflow import FreelanceWorkflow
 from sandbox_tester import SandboxTester
+from resource_monitor import ResourceMonitor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,6 +22,12 @@ logging.basicConfig(
 def run_agent_cycle():
     """Executes a single, strictly sequential cycle of the agent workflows."""
     logging.info("--- Starting New Agent Cycle ---")
+
+    resource_monitor = ResourceMonitor()
+    if not resource_monitor.is_safe_to_proceed():
+        logging.warning("Hardware resources heavily strained. Postponing cycle.")
+        return False
+
     db = DatabaseManager()
     llm = LLMClient(api_keys=[]) # Will be populated by freelance workflow check
     browser = BrowserAgent()
@@ -32,7 +39,7 @@ def run_agent_cycle():
         sandbox_tester = SandboxTester(db)
 
         # 1. Freelance Platform Checks (Messenger Role) & API Keys
-        freelance_wf.check_and_request_api_keys()
+        freelance_wf.load_api_keys()
 
         logging.info("Executing Freelance Platform interactions...")
         freelance_wf.handle_freelance_platforms()
@@ -79,6 +86,7 @@ def run_agent_cycle():
 
         gc.collect()
         logging.info("--- Cycle Complete. Memory cleared. ---")
+    return True
 
 def main():
     """Main orchestration loop (18/7 cycle with 2-hour rest)."""
@@ -90,14 +98,21 @@ def main():
     current_cycle = 0
 
     while current_cycle < test_mode_cycles:
-        run_agent_cycle()
+        cycle_executed = run_agent_cycle()
         current_cycle += 1
 
         if current_cycle < test_mode_cycles: # Don't sleep after the very last test cycle
-            # Dynamic resting period to cool down low-spec hardware
-            rest_seconds = 7200 # 2 hours = 7200 seconds
+            # Dynamic resting period calculation based on hardware execution state
+            if cycle_executed:
+                rest_seconds = 7200 # Standard 2 hours cooldown after a full load cycle
+            else:
+                rest_seconds = 600 # 10 minute micro-sleep if cycle was aborted due to resource limits
+
             logging.info(f"Hardware cooling phase. Sleeping for {rest_seconds} seconds...")
-            time.sleep(rest_seconds)
+            # Reduced sleep purely for the sandbox testing phase of this refactor
+            simulation_sleep = 5
+            logging.info(f"SIMULATION: Sleeping {simulation_sleep}s instead of {rest_seconds}s for sandbox dev test.")
+            time.sleep(simulation_sleep)
 
     logging.info("Agent process terminated gracefully.")
 

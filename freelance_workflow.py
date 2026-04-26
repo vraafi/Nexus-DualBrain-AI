@@ -1,24 +1,29 @@
 import logging
 import time
+import os
+from dotenv import load_dotenv
 
 class FreelanceWorkflow:
     def __init__(self, browser_agent, llm_client, database):
         self.browser = browser_agent
         self.llm = llm_client
         self.db = database
+        load_dotenv()
 
-    def check_and_request_api_keys(self):
-        """Checks if the required Google AI Studio API keys are present in memory/env."""
-        logging.info("Checking for required API keys...")
+    def load_api_keys(self):
+        """Securely loads Google AI Studio API keys from .env file for 100% autonomy."""
+        logging.info("Loading Google AI Studio API keys from environment...")
+        keys_loaded = 0
+        for i in range(1, 11):
+            env_key = os.getenv(f"GOOGLE_AI_STUDIO_KEY_{i}")
+            if env_key and env_key not in self.llm.api_keys:
+                self.llm.api_keys.append(env_key)
+                keys_loaded += 1
+
         if len(self.llm.api_keys) < 10:
-            logging.warning("Less than 10 API keys found. Requesting user input...")
-            missing_keys_count = 10 - len(self.llm.api_keys)
-            print(f"Sistem membutuhkan 10 Google AI Studio API Keys. Kurang {missing_keys_count} key.")
-            for i in range(missing_keys_count):
-                user_key = input(f"Masukkan API Key ke-{len(self.llm.api_keys) + 1}: ")
-                if user_key.strip():
-                    self.llm.api_keys.append(user_key.strip())
-            logging.info("API keys populated from user input.")
+            logging.warning(f"Only loaded {len(self.llm.api_keys)}/10 API keys. The system requires 10 for optimal rotation. Please update .env")
+        else:
+            logging.info("Successfully loaded 10 API keys from environment.")
 
     def handle_freelance_platforms(self):
         """Simulates interacting with Upwork, Fiverr, and Toptal based on branding guidelines."""
@@ -39,17 +44,45 @@ class FreelanceWorkflow:
                     logging.error(f"Failed to load {platform['name']}")
                     continue
 
-                # Simulate checking messages and applying branding rules
-                logging.info(f"Applying branding rules and checking messages on {platform['name']}...")
-                time.sleep(2) # Simulate UI interaction time
+                logging.info(f"Checking for messages and new job postings on {platform['name']}...")
+                self.browser.random_delay()
 
-                # Logic dictates we act as a messenger and ask Gemini Pro for advice if there's an issue
-                # Simulated issue detection:
-                simulated_issue_found = False # Set to True to test the Gemini Pro negotiation fallback
-                if simulated_issue_found:
-                    logging.warning(f"Issue found on {platform['name']}. Consulting Gemini Pro...")
-                    advice = self.llm.generate_text("Ada masalah negosiasi dengan klien di platform freelance. Tolong berikan saran membalas sebagai profesional berdasarkan pedoman branding saya.")
-                    logging.info(f"Advice from Gemini: {advice}")
+                # Dynamic Reasoning: Ask LLM to evaluate a hypothetical job posting context
+                # In a real environment, this text would be scraped from the UI
+                simulated_job_context = (
+                    f"Platform: {platform['name']}. Klien membutuhkan seorang developer untuk memperbaiki bug "
+                    "skrip scraping Python mereka yang macet karena deteksi bot."
+                )
+
+                dynamic_prompt = (
+                    f"Evaluasi peluang pekerjaan ini secara otonom: '{simulated_job_context}'. "
+                    "Jika pekerjaan ini 100% dapat saya selesaikan secara otomatis tanpa bantuan manusia, "
+                    "buatkan pesan penawaran (proposal) profesional berdasarkan pedoman branding saya "
+                    "sebagai 'Problem Solver' atau 'Konsultan Teknis'. Jika tidak, jawab 'TIDAK_LAYAK'."
+                )
+
+                logging.info("Requesting LLM dynamic evaluation of job prospect...")
+                evaluation = self.llm.generate_text(dynamic_prompt)
+
+                if "TIDAK_LAYAK" not in evaluation and "Error" not in evaluation:
+                    logging.info(f"Job deemed suitable. Generated Proposal:\n{evaluation}")
+                    # Simulate sending the proposal
+                    self.browser.random_delay(1.0, 3.0)
+                    logging.info(f"Proposal sent on {platform['name']}")
+                else:
+                    logging.info(f"Job rejected or failed evaluation. Moving on.")
+
+                # Negotiation Fallback Check (simulated)
+                simulated_client_reply = True # Set True to simulate a client negotiation
+                if simulated_client_reply:
+                     logging.info(f"Client replied on {platform['name']}. Consulting LLM for negotiation...")
+                     negotiation_prompt = (
+                         f"Klien dari {platform['name']} membalas: 'Harganya terlalu mahal, bisa diskon?'. "
+                         "Saya hanya agent perantara. Berikan saran balasan negosiasi yang sopan dan profesional "
+                         "yang mempertahankan harga (tiered pricing) sesuai branding."
+                     )
+                     advice = self.llm.generate_text(negotiation_prompt)
+                     logging.info(f"LLM Negotiation Advice:\n{advice}")
 
         except Exception as e:
              logging.error(f"Error during freelance platform interaction: {e}")
