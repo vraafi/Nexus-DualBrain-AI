@@ -1,5 +1,7 @@
 import logging
 import gc
+import time
+import random
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -11,17 +13,34 @@ class BrowserAgent:
     def __init__(self):
         self.driver = None
         logging.basicConfig(level=logging.INFO)
+        self.user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
+        ]
+
+    def random_delay(self, min_sec=2.0, max_sec=5.0):
+        """Simulates human-like delay."""
+        time.sleep(random.uniform(min_sec, max_sec))
 
     def _init_driver(self):
-        """Initializes the browser driver with low-memory optimizations."""
+        """Initializes the browser driver with low-memory optimizations and stealth options."""
         options = Options()
-        # Optimizations for low-spec hardware (Intel i3 Gen 8, 8GB RAM)
+        # Optimizations for low-spec hardware
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-gpu')
         options.add_argument('--disable-extensions')
-        options.add_argument('--blink-settings=imagesEnabled=false') # Disable images to save RAM if possible, but might need to toggle for Veo/Gemini
-        options.add_argument('--single-process') # Helps reduce memory overhead
+        options.add_argument('--single-process')
+
+        # Anti-detection stealth features
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+
+        # Rotate user agent
+        selected_ua = random.choice(self.user_agents)
+        options.add_argument(f'user-agent={selected_ua}')
 
         try:
             self.driver = webdriver.Chrome(options=options)

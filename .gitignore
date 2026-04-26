@@ -1,1 +1,8 @@
-.gitignore\n__pycache__/\n*.pyc\n*.log\n*.db\nclient_sandbox/\ndownloads/\nveo_outputs/
+.gitignore
+__pycache__/
+*.pyc
+*.log
+*.db
+client_sandbox/
+downloads/
+veo_outputs/

@@ -1,6 +1,7 @@
 import logging
 import time
 import os
+import requests
 
 class TikTokVeoWorkflow:
     def __init__(self, browser_agent, llm_client, database):
@@ -65,14 +66,21 @@ class TikTokVeoWorkflow:
         logging.info("Starting Gemini interaction for prompts and images...")
         self.db.update_task_state("gemini_interaction", "IN_PROGRESS")
 
-        # 1. Ask Gemini for prompts based on trend videos
-        prompt_request = (
-            "Saya ingin membuat video seperti trend affiliate. Sebutkan produknya dari "
-            "video ke berapa dan berikan prompt untuk Veo 3. Berikan 3 prompt untuk 1 produk "
-            "yang kamera shotnya berbeda tapi estetik."
+        # 1. Goal-oriented Dynamic Prompt Generation
+        # Context would normally be extracted from the TikTok videos (e.g. hashtags, captions, visual themes)
+        simulated_context = "Trend: Video gaya hidup minimalis, produk: botol minum estetis, target: Gen Z yang peduli lingkungan."
+
+        dynamic_prompt = (
+            f"Berdasarkan konteks tren berikut: '{simulated_context}', "
+            "tujuan kita adalah membuat video afiliasi TikTok dengan konversi tinggi menggunakan Veo 3. "
+            "1. Identifikasi produk utama.\n"
+            "2. Buat 3 prompt teks spesifik untuk AI Video Generator (Veo 3) dengan aspect ratio 9:16. "
+            "Setiap prompt harus memiliki angle kamera yang berbeda (misal: close-up, panning, wide-shot) "
+            "dan estetika yang kuat yang sesuai dengan target audiens."
         )
-        logging.info("Calling LLM API for prompt generation...")
-        llm_response = self.llm.generate_text(prompt_request)
+
+        logging.info("Calling LLM API for dynamic goal-oriented prompt generation...")
+        llm_response = self.llm.generate_text(dynamic_prompt)
 
         if "Error" in llm_response:
             logging.error("Failed to get response from Gemini.")
@@ -172,22 +180,31 @@ class TikTokVeoWorkflow:
                     else:
                         logging.error(f"Veo generation failed reflection check for {video_filename}")
 
-            # 2. Send to Telegram
-            # This would typically use python-telegram-bot or a REST API call
-            # We simulate the REST API call logic here to maintain sequential constraints without heavy async libs
-            telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-            chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+            # 2. Send to Telegram using actual requests.post logic
+            telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
+            chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
             if not telegram_token or not chat_id:
-                logging.warning("Telegram credentials missing in environment. Simulating send.")
+                logging.warning("Telegram credentials missing in .env. Skipping real API call, logging simulation instead.")
+                for vid_data in final_videos:
+                    logging.info(f"[SIMULATED TELEGRAM SEND] Video: {vid_data['path']}, Link: {vid_data['product_link']}")
+            else:
+                for vid_data in final_videos:
+                    logging.info(f"Sending {vid_data['path']} to Telegram...")
+                    try:
+                        # Send Video
+                        video_url = f"https://api.telegram.org/bot{telegram_token}/sendVideo"
+                        with open(vid_data['path'], 'rb') as video_file:
+                            files = {'video': video_file}
+                            data = {'chat_id': chat_id, 'caption': f"New Veo 3 Generation for Product: {vid_data['product_link']}"}
+                            response = requests.post(video_url, data=data, files=files, timeout=60)
 
-            for vid_data in final_videos:
-                logging.info(f"Sending {vid_data['path']} to Telegram...")
-                # Simulated Telegram send logic
-                # requests.post(f"https://api.telegram.org/bot{telegram_token}/sendVideo", ...)
-                # requests.post(f"https://api.telegram.org/bot{telegram_token}/sendMessage", data={"text": vid_data['product_link']})
-                time.sleep(1)
-                logging.info(f"Sent video and product link ({vid_data['product_link']}) to Telegram successfully.")
+                        if response.status_code == 200:
+                            logging.info(f"Successfully sent video {vid_data['path']} to Telegram.")
+                        else:
+                            logging.error(f"Failed to send video to Telegram. API Error: {response.status_code} - {response.text}")
+                    except Exception as req_err:
+                        logging.error(f"Network error while sending to Telegram: {req_err}")
 
         except Exception as e:
             logging.error(f"Error during Veo generation or Telegram send: {e}")
