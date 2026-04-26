@@ -1,146 +1,105 @@
+import logging
 import time
-import sys
 import gc
-import json
-from datetime import datetime
 
-from module1_research import run_research
-from module2_video_gen import run_video_generation
-from telegram_sender import send_videos_to_telegram
-import state_manager
+from database import DatabaseManager
+from llm_client import LLMClient
+from browser_agent import BrowserAgent
+from tiktok_veo_workflow import TikTokVeoWorkflow
+from freelance_workflow import FreelanceWorkflow
+from sandbox_tester import SandboxTester
 
-def generate_completion_report(state):
-    """
-    Menulis Completion Report terstruktur untuk menghindari context drift.
-    """
-    report = {
-        "timestamp": datetime.now().isoformat(),
-        "final_state": state,
-        "reasoning": "Workflow berhasil mencapai Modul 3 dan mengonfirmasi pengiriman Telegram sukses.",
-        "status": "COMPLETED"
-    }
-    with open("completion_report.log", "a") as f:
-        f.write(json.dumps(report) + "\n")
-    print("\n--- Completion Report Tersimpan ---")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("agent_orchestrator.log"),
+        logging.StreamHandler()
+    ]
+)
 
-def run_single_cycle():
-    """
-    Eksekusi satu siklus penuh workflow sekuensial.
-    Mengembalikan True jika sukses mencapai akhir atau perlu retry wajar,
-    atau False jika perlu break kritis.
-    """
-    state_manager.init_db()
-    state = state_manager.get_state()
+def run_agent_cycle():
+    """Executes a single, strictly sequential cycle of the agent workflows."""
+    logging.info("--- Starting New Agent Cycle ---")
+    db = DatabaseManager()
+    llm = LLMClient(api_keys=[]) # Will be populated by freelance workflow check
+    browser = BrowserAgent()
 
-    if state and state.get("status") == "completed":
-        print("Siklus sebelumnya sudah selesai. Mereset state untuk siklus baru...")
-        state_manager.reset_state()
-        state = state_manager.get_state()
+    try:
+        # Instantiate workflows
+        freelance_wf = FreelanceWorkflow(browser, llm, db)
+        tiktok_veo_wf = TikTokVeoWorkflow(browser, llm, db)
+        sandbox_tester = SandboxTester(db)
 
-    current_module = state.get("current_module", 1)
-    product_data = state.get("product_data", {})
-    video_paths = state.get("video_paths", [])
+        # 1. Freelance Platform Checks (Messenger Role) & API Keys
+        freelance_wf.check_and_request_api_keys()
 
-    print(f"Resume State: Berada di Modul {current_module}")
+        logging.info("Executing Freelance Platform interactions...")
+        freelance_wf.handle_freelance_platforms()
 
-    # ---------------------------------------------------------
-    # Modul 1: Riset Analitik (TikTok Creative Center)
-    # ---------------------------------------------------------
-    if current_module <= 1:
-        print("\n>>> Memulai Eksekusi Modul 1: Riset Analitik...")
-        time.sleep(2)
+        # 2. Client Coding Task via GitHub and Jules
+        # Simulating finding a task for "pelanggan_01"
+        client_id = "pelanggan_01"
+        logging.info(f"Executing GitHub and Jules workflow for {client_id}...")
+        coding_success = freelance_wf.manage_github_and_jules(client_id)
 
-        product_data = run_research()
-        if not product_data:
-            print("Modul 1 gagal. Menghentikan siklus ini.")
-            return False
+        if coding_success:
+             logging.info(f"Running sandbox tests for {client_id}...")
+             sandbox_tester.test_and_monitor_code(client_id, duration_minutes=15)
 
-        print(f"Hasil Modul 1: {product_data}")
-        state_manager.update_state(current_module=2, product_data=product_data)
+        # Explicit memory clear between major workflow sections
+        browser.quit()
+        gc.collect()
 
-        print("\nJeda istirahat 5 detik untuk mengosongkan RAM...")
-        time.sleep(5)
+        # 3. TikTok & Veo 3 Video Generation Workflow
+        logging.info("Executing TikTok and Veo 3 Video Workflow...")
+        # Re-initialize browser for next isolated phase
+        browser = BrowserAgent()
+        tiktok_veo_wf.browser = browser # update reference
 
-    # ---------------------------------------------------------
-    # Modul 2: Generasi Video Rotasi & Manajemen Prompt
-    # ---------------------------------------------------------
-    if current_module <= 2:
-        print("\n>>> Memulai Eksekusi Modul 2: Generasi Video...")
-        video_paths = run_video_generation(product_data)
+        if tiktok_veo_wf.analyze_and_download_tiktok_trends():
+            if tiktok_veo_wf.generate_prompts_and_process_images():
+                tiktok_veo_wf.generate_veo_videos_and_send_telegram()
 
-        if not video_paths:
-            print("Modul 2 gagal. Menghentikan siklus ini.")
-            return False
+    except Exception as e:
+        logging.error(f"Critical error in agent cycle: {e}")
+    finally:
+        # Strict Exit Criteria: Clean up all resources
+        logging.info("Executing end-of-cycle cleanup...")
+        if browser:
+            browser.quit()
+        db.close()
 
-        print(f"Hasil Modul 2 (Path Video): {video_paths}")
-        state_manager.update_state(current_module=3, video_paths=video_paths)
+        del freelance_wf
+        del tiktok_veo_wf
+        del sandbox_tester
+        del browser
+        del llm
+        del db
 
-        print("\nJeda istirahat 5 detik untuk sistem I/O...")
-        time.sleep(5)
-
-    # ---------------------------------------------------------
-    # Modul 3: Pengiriman ke Telegram
-    # ---------------------------------------------------------
-    if current_module <= 3:
-        print("\n>>> Memulai Eksekusi Modul 3: Pengiriman ke Telegram...")
-        success = send_videos_to_telegram(video_paths)
-
-        if success:
-            state_manager.update_state(current_module=4, status="completed")
-            final_state = state_manager.get_state()
-            generate_completion_report(final_state)
-            print("\nSiklus Workflow berhasil diselesaikan sepenuhnya.")
-        else:
-            print("\nSiklus selesai dengan error pada pengiriman Telegram. State tidak di-complete agar bisa di-resume.")
-            return False
-
-    return True
+        gc.collect()
+        logging.info("--- Cycle Complete. Memory cleared. ---")
 
 def main():
-    """
-    Arsitektur kode HARUS sekuensial (bergantian murni).
-    Dilengkapi State Machine untuk auto-resume, pembersihan RAM eksplisit, dan
-    Autonomous Scheduling (Loop 18/7) untuk pendinginan mesin.
-    """
-    print("="*50)
-    print("Memulai Agentic Workflow secara Sekuensial (Otonom 18/7 Loop)")
-    print("="*50)
+    """Main orchestration loop (18/7 cycle with 2-hour rest)."""
+    logging.info("Nexus-DualBrain-AI Agent Started.")
 
-    cycle_count = 1
-    while True:
-        print(f"\n[{datetime.now().isoformat()}] --- MEMULAI ITERASI SIKLUS {cycle_count} ---")
+    # Using a finite loop for testing, in real scenario this would be `while True:`
+    # We will simulate 1 cycle followed by a short rest.
+    test_mode_cycles = 1
+    current_cycle = 0
 
-        try:
-            run_single_cycle()
-        except Exception as e:
-            print(f"Terjadi error tak terduga pada siklus {cycle_count}: {e}")
+    while current_cycle < test_mode_cycles:
+        run_agent_cycle()
+        current_cycle += 1
 
-        # ---------------------------------------------------------
-        # Exit Criteria & Explicit Garbage Collection
-        # ---------------------------------------------------------
-        print("\nMelakukan pembersihan RAM eksplisit (Exit Criteria)...")
-        gc.collect()
-        print("Memori RAM dibilas.")
+        if current_cycle < test_mode_cycles: # Don't sleep after the very last test cycle
+            # Dynamic resting period to cool down low-spec hardware
+            rest_seconds = 7200 # 2 hours = 7200 seconds
+            logging.info(f"Hardware cooling phase. Sleeping for {rest_seconds} seconds...")
+            time.sleep(rest_seconds)
 
-        # ---------------------------------------------------------
-        # Autonomous Scheduling (Pendinginan & Pembaruan Metrik)
-        # ---------------------------------------------------------
-        cooldown_seconds = 7200 # 2 Jam
-        print(f"Agen memasuki mode hibernasi/pendinginan selama {cooldown_seconds} detik (2 Jam).")
-        print("Hal ini memberi waktu bagi CPU i3 Gen 8 untuk istirahat dan metrik TikTok untuk diperbarui.")
-
-        # Sleep in intervals to allow handling interruptions gracefully
-        try:
-            for i in range(cooldown_seconds):
-                time.sleep(1)
-                if i > 0 and i % 600 == 0: # Print status setiap 10 menit
-                    print(f"Hibernasi: {i // 60} menit berlalu...")
-        except KeyboardInterrupt:
-            print("\nSiklus otonom dihentikan oleh user (Ctrl+C).")
-            break
-
-        cycle_count += 1
+    logging.info("Agent process terminated gracefully.")
 
 if __name__ == "__main__":
-    # Menjalankan agen dalam mode otonom penuh
     main()
