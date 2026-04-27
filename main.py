@@ -22,12 +22,6 @@ logging.basicConfig(
 def run_agent_cycle():
     """Executes a single, strictly sequential cycle of the agent workflows."""
     logging.info("--- Starting New Agent Cycle ---")
-
-    resource_monitor = ResourceMonitor()
-    if not resource_monitor.is_safe_to_proceed():
-        logging.warning("Hardware resources heavily strained. Postponing cycle.")
-        return False
-
     db = DatabaseManager()
     llm = LLMClient(api_keys=[]) # Will be populated by freelance workflow check
     browser = BrowserAgent()
@@ -48,11 +42,12 @@ def run_agent_cycle():
         # Simulating finding a task for "pelanggan_01"
         client_id = "pelanggan_01"
         logging.info(f"Executing GitHub and Jules workflow for {client_id}...")
-        coding_success = freelance_wf.manage_github_and_jules(client_id)
+        generated_code = freelance_wf.manage_github_and_jules(client_id)
 
-        if coding_success:
+        if generated_code:
              logging.info(f"Running sandbox tests for {client_id}...")
-             sandbox_tester.test_and_monitor_code(client_id, duration_minutes=15)
+             # For the dev test, we set duration to 1 minute to avoid a 15-minute wait
+             sandbox_tester.test_and_monitor_code(client_id, generated_code, duration_minutes=1)
 
         # Explicit memory clear between major workflow sections
         browser.quit()
@@ -86,7 +81,6 @@ def run_agent_cycle():
 
         gc.collect()
         logging.info("--- Cycle Complete. Memory cleared. ---")
-    return True
 
 def main():
     """Main orchestration loop (18/7 cycle with 2-hour rest)."""
@@ -98,16 +92,18 @@ def main():
     current_cycle = 0
 
     while current_cycle < test_mode_cycles:
-        cycle_executed = run_agent_cycle()
+        # Check resources before starting the cycle
+        resource_monitor = ResourceMonitor()
+        if not resource_monitor.is_safe_to_proceed():
+            logging.warning("Hardware resources strained. Deferring agent cycle and entering micro-sleep.")
+            time.sleep(600) # Sleep for 10 minutes and check again
+            continue
+
+        run_agent_cycle()
         current_cycle += 1
 
         if current_cycle < test_mode_cycles: # Don't sleep after the very last test cycle
-            # Dynamic resting period calculation based on hardware execution state
-            if cycle_executed:
-                rest_seconds = 7200 # Standard 2 hours cooldown after a full load cycle
-            else:
-                rest_seconds = 600 # 10 minute micro-sleep if cycle was aborted due to resource limits
-
+            rest_seconds = 7200 # Standard 2 hours cooldown after a full load cycle
             logging.info(f"Hardware cooling phase. Sleeping for {rest_seconds} seconds...")
             # Reduced sleep purely for the sandbox testing phase of this refactor
             simulation_sleep = 5

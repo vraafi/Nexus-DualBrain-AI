@@ -23,22 +23,23 @@ class LLMClient:
             self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
             logging.info(f"Rotated API key to index {self.current_key_index}")
 
-    def generate_text(self, prompt, retries=3):
+    def generate_text(self, prompt, retries=3, require_json=False):
         for _ in range(retries):
             api_key = self._get_current_key()
             if not api_key:
                  logging.error("API Key not found, cannot generate text")
                  return "Error: No API Key available."
 
-            # Construct the endpoint URL for Google AI Studio REST API
-            # Note: actual endpoint might vary based on documentation, using a common structure here
-            # Assuming 'gemma-4-31b-it' might be accessible via a standard generateContent endpoint.
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={api_key}"
 
             headers = {'Content-Type': 'application/json'}
             data = {
-                "contents": [{"parts": [{"text": prompt}]}]
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {}
             }
+
+            if require_json:
+                data["generationConfig"]["responseMimeType"] = "application/json"
 
             try:
                 response = requests.post(url, headers=headers, data=json.dumps(data), timeout=30)
