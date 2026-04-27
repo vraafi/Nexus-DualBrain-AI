@@ -3,6 +3,7 @@ import shutil
 import logging
 import time
 import subprocess
+import sys
 
 class SandboxTester:
     def __init__(self, database):
@@ -35,20 +36,33 @@ class SandboxTester:
         logging.info(f"Starting actual subprocess execution and monitoring for up to {duration_minutes} minutes...")
 
         try:
-            # We use subprocess.run with a timeout. If it completes before the timeout, it's successful.
-            # If it's a long-running service, we expect a TimeoutExpired, which means it survived the test period.
             timeout_seconds = duration_minutes * 60
 
-            # Start process and capture output
+            # SECURE EXECUTION: Run the code inside an isolated Docker container.
+            # This prevents host filesystem access and network exfiltration of secrets.
+            container_name = f"sandbox_{client_id}_{int(time.time())}"
+            docker_cmd = [
+                "docker", "run", "--rm",
+                "--name", container_name,
+                "--network", "none", # Block network access to prevent exfiltration
+                "--memory", "256m",  # Restrict memory to protect host
+                "--cpus", "0.5",     # Restrict CPU
+                "-v", f"{self.sandbox_dir}:/usr/src/app:ro", # Read-only mount of the generated code
+                "-w", "/usr/src/app",
+                "python:3.12-alpine",
+                "python", "app.py"
+            ]
+
+            logging.info(f"Starting Docker execution for {client_id}...")
+
             process = subprocess.run(
-                ["python", "app.py"],
-                cwd=self.sandbox_dir,
+                docker_cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds
             )
 
-            logging.info(f"Process exited with return code: {process.returncode}")
+            logging.info(f"Docker process exited with return code: {process.returncode}")
             logging.info(f"STDOUT: {process.stdout.strip()}")
             if process.stderr:
                 logging.warning(f"STDERR: {process.stderr.strip()}")
@@ -61,9 +75,17 @@ class SandboxTester:
         except subprocess.TimeoutExpired:
             logging.info(f"Process ran successfully for the full {duration_minutes} minutes without crashing.")
             test_passed = True
+            # Cleanup container on timeout
+            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
         except Exception as e:
             logging.error(f"Sandbox execution error: {e}")
             test_passed = False
+
+            # Attempt cleanup on error
+            try:
+                 subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+            except:
+                 pass
 
         if test_passed:
             logging.info(f"Sandbox testing for {client_id} completed successfully.")
