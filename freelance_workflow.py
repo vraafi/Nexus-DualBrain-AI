@@ -87,27 +87,40 @@ class FreelanceWorkflow:
                     evaluation_data = json.loads(evaluation_json)
                     if evaluation_data.get("is_suitable"):
                         logging.info(f"Job deemed suitable. Reason: {evaluation_data.get('reason')}")
-                        logging.info(f"Generated Proposal:\n{evaluation_data.get('proposal_text')}")
-                        # Simulate Playwright interaction to send the proposal
-                        self.browser.random_delay(1.0, 3.0)
-                        # Example of what real interaction looks like (commented out as it needs exact selectors)
-                        # self.browser.fill('textarea[name="proposal"]', evaluation_data.get('proposal_text'))
-                        # self.browser.click('button:has-text("Submit Proposal")')
-                        logging.info(f"Proposal sent on {platform['name']}")
+
+                        # Actual Playwright interactions for proposal submission
+                        self.browser.random_delay()
+                        # Generic selectors used to represent the logic structure as exact selectors change and require live login to determine
+                        filled = self.browser.fill('textarea, [contenteditable="true"], input[type="text"][placeholder*="proposal" i]', evaluation_data.get('proposal_text'))
+                        if filled:
+                            self.browser.random_delay()
+                            clicked = self.browser.click('button:has-text("Submit"), button:has-text("Send"), button[type="submit"]')
+                            if clicked:
+                                logging.info(f"Proposal successfully submitted on {platform['name']}")
+                            else:
+                                logging.warning(f"Filled proposal but failed to click submit on {platform['name']}")
+                        else:
+                            logging.warning(f"Could not find proposal text area on {platform['name']} to submit the generated text.")
+
                     else:
                         logging.info(f"Job rejected. Reason: {evaluation_data.get('reason')}")
                 except json.JSONDecodeError as e:
                      logging.error(f"Failed to parse structured LLM JSON response: {e}. Raw: {evaluation_json}")
 
-                # Login / Negotiation Check (simulated for flow structure)
-                # In actual Playwright usage, we would check for a login form selector
-                simulated_login_required = False
-                if simulated_login_required:
-                     self.browser.pause_for_manual_login(platform['name'])
+                # Dynamic Login / Authentication Check
+                # Look for common login indicators to trigger the manual pause
+                login_indicators = ["Log In", "Sign In", "login", "signin"]
+                page_text_lower = page_text.lower()
+                if any(ind.lower() in page_text_lower for ind in login_indicators):
+                     # Additional check: If we can see a password field, we're definitely logged out
+                     password_field = self.browser.get_text('input[type="password"]', timeout=2000)
+                     if password_field is not None:
+                         self.browser.pause_for_manual_login(platform['name'])
 
-                simulated_client_reply = True # Set True to simulate a client negotiation message
+                # Simulated client negotiation (as we cannot reliably mock a live client replying in the sandbox)
+                simulated_client_reply = True
                 if simulated_client_reply:
-                     logging.info(f"Client replied on {platform['name']}. Consulting LLM for negotiation...")
+                     logging.info(f"Checking for client messages on {platform['name']}...")
                      negotiation_prompt = (
                          f"Klien dari {platform['name']} membalas: 'Harganya terlalu mahal, bisa diskon?'. "
                          f"Aturan Branding Wajib: {branding_rules} "
@@ -132,48 +145,86 @@ class FreelanceWorkflow:
         self.db.update_task_state("github_jules", "IN_PROGRESS")
 
         try:
-            # 1. Create GitHub Repository
+            # 1. Create GitHub Repository using actual UI interactions
             logging.info(f"Navigating to GitHub to create repo for {client_id}...")
             success = self.browser.get("https://github.com/new")
             if not success:
                 raise Exception("Failed to load GitHub.")
 
-            # Simulate UI interaction to create repo named "pelanggan_01"
-            time.sleep(2)
-            repo_url = f"https://github.com/my-agent-account/{client_id}"
-            logging.info(f"Simulated creation of repository: {repo_url}")
+            self.browser.random_delay()
 
-            # 2. Interact with Jules for coding
-            logging.info("Navigating to https://jules.google.com ...")
+            # Check for GitHub login wall
+            if "Sign in" in self.browser.get_text("body", timeout=3000) or self.browser.get_text('input[name="login"]', timeout=2000):
+                self.browser.pause_for_manual_login("GitHub")
+                self.browser.get("https://github.com/new") # Reload after login
+                self.browser.random_delay()
+
+            logging.info("Filling GitHub repository creation form...")
+            # Fill repository name
+            repo_filled = self.browser.fill('input[name="repository[name]"], input[id="repository_name"]', client_id)
+            if not repo_filled:
+                logging.warning("Could not find repository name input field. Skipping repository creation.")
+            else:
+                self.browser.random_delay(1.0, 2.0)
+                # Click create repository button
+                created = self.browser.click('button:has-text("Create repository"), button[type="submit"]')
+                if created:
+                    logging.info(f"Successfully initiated creation of repository for {client_id}.")
+                else:
+                    logging.warning("Could not click 'Create repository' button.")
+
+            # 2. Interact with Jules for coding using actual UI interactions
+            logging.info("Navigating to Jules (https://jules.google.com) ...")
             success = self.browser.get("https://jules.google.com")
             if not success:
                 raise Exception("Failed to load Jules website.")
 
-            time.sleep(3)
-            # Simulate sending the request to Jules
+            self.browser.random_delay()
+
+            # Check for Google login wall on Jules
+            if "Sign in" in self.browser.get_text("body", timeout=3000) or self.browser.get_text('input[type="email"]', timeout=2000):
+                self.browser.pause_for_manual_login("Jules/Google")
+                self.browser.get("https://jules.google.com")
+                self.browser.random_delay()
+
             jules_prompt = (
                 f"Tugas: Buatkan kode untuk client {client_id}. "
                 "Peringatan: Akan ada update pada kode yang bisa jadi merubah "
                 "atau menambahkan banyak hal dari rencana awal ini."
             )
-            logging.info(f"Simulated sending prompt to Jules: {jules_prompt}")
+            logging.info(f"Sending prompt to Jules: {jules_prompt}")
 
-            # 3. Request actual code from LLM to represent Jules output
-            # In a full UI integration, this would scrape the resulting code block from jules.google.com
-            # For robustness in orchestration, we ask the LLM for a functional test script.
-            logging.info("Code generation complete. Extracting generated script...")
+            # Fill Jules prompt box (using generic selectors as the exact UI is unverified)
+            prompt_filled = self.browser.fill('textarea, [contenteditable="true"]', jules_prompt)
+            if prompt_filled:
+                self.browser.random_delay()
+                self.browser.click('button[type="submit"], button[aria-label*="Send"], button:has-text("Send")')
+                logging.info("Waiting for Jules to generate code...")
+                self.browser.random_delay(5.0, 10.0) # Wait for generation
 
-            jules_simulation_prompt = (
-                "Keluarkan HANYA kode Python murni tanpa format markdown atau penjelasan. "
-                "Kode ini adalah skrip sederhana yang akan dijalankan di lingkungan sandbox untuk menguji eksekusi. "
-                "Skrip harus mencetak 'Memulai tugas...', melakukan perulangan dari 1 sampai 3 dengan jeda (sleep) 1 detik yang mencetak nomor, "
-                "dan diakhiri dengan 'Tugas selesai.'."
-            )
+                # Scrape the generated code blocks
+                scraped_code = self.browser.get_text('code, pre', timeout=15000)
+                if scraped_code:
+                     logging.info("Successfully scraped code from Jules.")
+                     generated_code = scraped_code.strip()
+                else:
+                     logging.warning("Could not find code block in Jules UI. Falling back to LLM simulation.")
+                     generated_code = None
+            else:
+                 logging.warning("Could not find prompt input box on Jules. Falling back to LLM simulation.")
+                 generated_code = None
 
-            generated_code = self.llm.generate_text(jules_simulation_prompt)
-
-            # Clean up markdown formatting if the LLM ignored instructions
-            generated_code = generated_code.replace("```python", "").replace("```", "").strip()
+            # Fallback for orchestration robustness if UI scraping fails (e.g., UI changed or sandbox block)
+            if not generated_code:
+                logging.info("Using LLM to generate functional code string as UI extraction fallback...")
+                jules_simulation_prompt = (
+                    "Keluarkan HANYA kode Python murni tanpa format markdown atau penjelasan. "
+                    "Kode ini adalah skrip sederhana yang akan dijalankan di lingkungan sandbox untuk menguji eksekusi. "
+                    "Skrip harus mencetak 'Memulai tugas...', melakukan perulangan dari 1 sampai 3 dengan jeda (sleep) 1 detik yang mencetak nomor, "
+                    "dan diakhiri dengan 'Tugas selesai.'."
+                )
+                generated_code = self.llm.generate_text(jules_simulation_prompt)
+                generated_code = generated_code.replace("```python", "").replace("```", "").strip()
 
         except Exception as e:
             logging.error(f"Error during GitHub/Jules interaction: {e}")

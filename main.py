@@ -1,6 +1,8 @@
 import logging
 import time
 import gc
+from datetime import datetime
+import pytz
 
 from database import DatabaseManager
 from llm_client import LLMClient
@@ -47,7 +49,7 @@ def run_agent_cycle():
         if generated_code:
              logging.info(f"Running sandbox tests for {client_id}...")
              # For the dev test, we set duration to 1 minute to avoid a 15-minute wait
-             sandbox_tester.test_and_monitor_code(client_id, generated_code, duration_minutes=1)
+             sandbox_tester.test_and_monitor_code(client_id, generated_code, duration_minutes=15)
 
         # Explicit memory clear between major workflow sections
         browser.quit()
@@ -82,8 +84,18 @@ def run_agent_cycle():
         gc.collect()
         logging.info("--- Cycle Complete. Memory cleared. ---")
 
+def is_us_business_hours():
+    """Checks if the current time is between 09:00 and 15:00 EST."""
+    est = pytz.timezone('US/Eastern')
+    now_est = datetime.now(est)
+
+    # Business hours threshold (09:00 to 15:00)
+    if 9 <= now_est.hour < 15:
+        return True
+    return False
+
 def main():
-    """Main orchestration loop (18/7 cycle with 2-hour rest)."""
+    """Main orchestration loop (18/7 cycle with dynamic timezone rest)."""
     logging.info("Nexus-DualBrain-AI Agent Started.")
 
     # Using a finite loop for testing, in real scenario this would be `while True:`
@@ -92,6 +104,12 @@ def main():
     current_cycle = 0
 
     while current_cycle < test_mode_cycles:
+        if is_us_business_hours():
+             logging.info("Current time is within US business hours (09:00-15:00 EST). Entering 6-hour sleep mode to avoid bot detection.")
+             # Fulfill user requirement to sleep during US peak hours
+             time.sleep(6 * 3600) # 6 hours
+             continue
+
         # Check resources before starting the cycle
         resource_monitor = ResourceMonitor()
         if not resource_monitor.is_safe_to_proceed():
