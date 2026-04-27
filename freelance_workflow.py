@@ -14,11 +14,14 @@ class FreelanceWorkflow:
         """Securely loads Google AI Studio API keys from .env file for 100% autonomy."""
         logging.info("Loading Google AI Studio API keys from environment...")
         keys_loaded = 0
+        new_keys = []
         for i in range(1, 11):
             env_key = os.getenv(f"GOOGLE_AI_STUDIO_KEY_{i}")
-            if env_key and env_key not in self.llm.api_keys:
-                self.llm.api_keys.append(env_key)
+            if env_key:
+                new_keys.append(env_key)
                 keys_loaded += 1
+
+        self.llm.update_keys(new_keys)
 
         if len(self.llm.api_keys) < 10:
             logging.warning(f"Only loaded {len(self.llm.api_keys)}/10 API keys. The system requires 10 for optimal rotation. Please update .env")
@@ -66,16 +69,20 @@ class FreelanceWorkflow:
                 elif platform['name'] == "Toptal":
                     branding_rules = "Gunakan branding sebagai 'Elite & Senior Engineer' (Top 3%). Jelaskan teknologi dari segi efisiensi bisnis, arsitektur yang scalable, dan prinsip SOLID/Clean Code."
 
-                # 2. Dynamic Reasoning: Ask LLM to evaluate the job using Structured JSON output
+                # 2. Advanced Autonomous Job Filtering Loop
                 dynamic_prompt = (
-                    f"Evaluasi halaman pekerjaan freelance ini: '{page_text}'. "
-                    f"Platform: {platform['name']}. Aturan Branding Wajib: {branding_rules} "
-                    "Sebagai agen AI otonom, bisakah kamu 100% menyelesaikan pekerjaan ini tanpa campur tangan manusia? "
+                    f"Lakukan evaluasi otonomi tingkat lanjut untuk halaman pekerjaan ini: '{page_text}'.\n"
+                    f"Platform: {platform['name']}. Aturan Branding Wajib: {branding_rules}\n"
+                    "Lakukan 3 tahap evaluasi:\n"
+                    "1. Analisis NLP: Pahami deskripsi kerja inti.\n"
+                    "2. Simulasi Mental: Jabarkan langkah-langkah abstrak yang akan kamu ambil sebagai agen. Apakah ada langkah fisik (menelepon, desain UI kompleks via figma, meeting zoom)? Jika ya, kamu tidak otonom.\n"
+                    "3. Verifikasi Tools: Apakah kita memerlukan kredensial pihak ketiga yang tidak kita miliki (misal API AWS, server khusus klien)? Jika ya, kamu tidak otonom.\n\n"
+                    "Tentukan skor otonomi dari 0-100%. Kamu HANYA boleh mengambil pekerjaan dengan skor otonomi > 95%.\n"
                     "Keluarkan response HANYA dalam format JSON dengan skema berikut: "
-                    "{ \"is_suitable\": boolean, \"reason\": \"alasan singkat\", \"proposal_text\": \"Teks proposal profesional berdasarkan pedoman branding jika suitable, atau null jika tidak\" }"
+                    "{ \"autonomy_score\": integer, \"is_suitable\": boolean, \"reason\": \"alasan singkat berdasarkan 3 tahap\", \"proposal_text\": \"Teks proposal profesional berdasarkan pedoman branding jika suitable, atau null jika tidak\" }"
                 )
 
-                logging.info(f"Requesting LLM dynamic structured evaluation for {platform['name']} prospect with explicit branding...")
+                logging.info(f"Requesting Advanced Autonomous Evaluation (NLP -> Mental Sim -> Tools) for {platform['name']} prospect...")
                 evaluation_json = self.llm.generate_text(dynamic_prompt, require_json=True)
 
                 if "Error" in evaluation_json:

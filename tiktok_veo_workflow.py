@@ -333,4 +333,4 @@ class TikTokVeoWorkflow:
             return False
 
         self.db.update_task_state("veo_generation", "COMPLETED")
-        return True
+        return len(final_videos)

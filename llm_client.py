@@ -12,11 +12,31 @@ class LLMClient:
             self.api_keys = api_keys
         self.model = model
         self.current_key_index = 0
+        self.key_usage_counts = {key: 0 for key in self.api_keys}
+        self.MAX_CALLS_PER_KEY = 1000 # Configurable threshold to prevent bans
+
+    def update_keys(self, new_keys):
+        """Dynamically updates the keys and initializes usage tracking."""
+        for key in new_keys:
+            if key not in self.api_keys:
+                self.api_keys.append(key)
+                self.key_usage_counts[key] = 0
 
     def _get_current_key(self):
         if not self.api_keys:
             return None
-        return self.api_keys[self.current_key_index]
+
+        start_index = self.current_key_index
+        # Find a key that hasn't exceeded its usage limit
+        while True:
+            key = self.api_keys[self.current_key_index]
+            if self.key_usage_counts[key] < self.MAX_CALLS_PER_KEY:
+                return key
+
+            self._rotate_key()
+            if self.current_key_index == start_index:
+                logging.critical("All API keys have exceeded their usage limits!")
+                return None
 
     def _rotate_key(self):
         if self.api_keys:
@@ -58,6 +78,7 @@ class LLMClient:
                 response = requests.post(url, headers=headers, data=json.dumps(data), timeout=30)
 
                 if response.status_code == 200:
+                    self.key_usage_counts[api_key] += 1
                     result = response.json()
                     # Parse the response structure (adjust if standard Google AI Studio structure varies for gemma)
                     try:

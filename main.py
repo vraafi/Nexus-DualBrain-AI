@@ -11,6 +11,7 @@ from tiktok_veo_workflow import TikTokVeoWorkflow
 from freelance_workflow import FreelanceWorkflow
 from sandbox_tester import SandboxTester
 from resource_monitor import ResourceMonitor
+from financial_module import FinancialModule
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,12 +75,10 @@ def run_agent_cycle():
             browser.quit()
         db.close()
 
-        del freelance_wf
-        del tiktok_veo_wf
-        del sandbox_tester
-        del browser
-        del llm
-        del db
+        # Safely delete local variables if they exist
+        for var in ['freelance_wf', 'tiktok_veo_wf', 'sandbox_tester', 'browser', 'llm', 'db', 'finance']:
+            if var in locals():
+                del locals()[var]
 
         gc.collect()
         logging.info("--- Cycle Complete. Memory cleared. ---")
