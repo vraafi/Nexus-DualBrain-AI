@@ -1,5 +1,7 @@
 import psutil
 import logging
+import os
+import shutil
 
 class ResourceMonitor:
     def __init__(self, ram_threshold=85.0):
@@ -19,7 +21,26 @@ class ResourceMonitor:
 
         # Add basic disk space check to prevent crashes on the 500GB HDD constraint
         if disk_usage > 95.0:
-             logging.warning(f"Disk usage ({disk_usage}%) critically high. Unsafe to download videos or write large files.")
-             return False
+             logging.warning(f"Disk usage ({disk_usage}%) critically high. Attempting to clear temporary storage...")
+             self._clear_storage_dirs()
+             # Re-check after cleanup
+             if psutil.disk_usage('/').percent > 95.0:
+                 logging.error("Disk usage remains critical after cleanup. Unsafe to proceed.")
+                 return False
 
         return True
+
+    def _clear_storage_dirs(self):
+        """Actively clears downloaded and generated files to free up disk space."""
+        dirs_to_clear = ["downloads", "veo_outputs"]
+        for d in dirs_to_clear:
+            dir_path = os.path.join(os.getcwd(), d)
+            if os.path.exists(dir_path):
+                try:
+                    for filename in os.listdir(dir_path):
+                        file_path = os.path.join(dir_path, filename)
+                        if os.path.isfile(file_path):
+                            os.unlink(file_path)
+                    logging.info(f"Cleared directory: {d}")
+                except Exception as e:
+                    logging.error(f"Failed to clear {d}: {e}")
