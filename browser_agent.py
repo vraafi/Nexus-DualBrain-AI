@@ -2,16 +2,15 @@ import logging
 import gc
 import time
 import random
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, WebDriverException
+import asyncio
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 class BrowserAgent:
     def __init__(self):
-        self.driver = None
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self.page = None
         logging.basicConfig(level=logging.INFO)
         self.user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -19,53 +18,69 @@ class BrowserAgent:
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
         ]
 
-    def random_delay(self, min_sec=2.0, max_sec=5.0):
+    def random_delay(self, min_sec=1.0, max_sec=3.0):
         """Simulates human-like delay."""
         time.sleep(random.uniform(min_sec, max_sec))
 
     def _init_driver(self):
-        """Initializes the browser driver with low-memory optimizations and stealth options."""
-        options = Options()
-        # Optimizations for low-spec hardware
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--disable-extensions')
-        options.add_argument('--single-process')
-
-        # Anti-detection stealth features
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option('useAutomationExtension', False)
-
-        # Rotate user agent
-        selected_ua = random.choice(self.user_agents)
-        options.add_argument(f'user-agent={selected_ua}')
-
+        """Initializes a persistent Playwright browser context with low-memory and stealth optimizations."""
         try:
-            self.driver = webdriver.Chrome(options=options)
-            self.driver.set_page_load_timeout(30)
-            logging.info("Browser driver initialized.")
-        except WebDriverException as e:
-            logging.error(f"Failed to initialize browser: {e}")
+            self.playwright = sync_playwright().start()
+
+            # Optimizations for low-spec hardware
+            args = [
+                '--disable-dev-shm-usage',
+                '--no-sandbox',
+                '--disable-gpu',
+                '--disable-extensions',
+                '--single-process',
+                '--disable-blink-features=AutomationControlled'
+            ]
+
+            selected_ua = random.choice(self.user_agents)
+
+            # Use a persistent context so manual logins survive across garbage collection cycles
+            user_data_dir = "/tmp/nexus_playwright_profile"
+            self.context = self.playwright.chromium.launch_persistent_context(
+                user_data_dir=user_data_dir,
+                headless=False,
+                args=args,
+                user_agent=selected_ua
+            )
+
+            # In a persistent context, a default page is often opened automatically
+            pages = self.context.pages
+            if pages:
+                self.page = pages[0]
+            else:
+                self.page = self.context.new_page()
+
+            # Override navigator.webdriver to bypass basic bot detection
+            self.page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
+            logging.info(f"Playwright persistent browser context initialized successfully at {user_data_dir}.")
+        except Exception as e:
+            logging.error(f"Failed to initialize persistent Playwright browser: {e}")
             self.quit()
             raise
 
     def get(self, url):
         """Navigates to a URL with strict error handling and memory management."""
-        if not self.driver:
+        if not self.page:
             self._init_driver()
 
         try:
             logging.info(f"Navigating to {url}")
-            self.driver.get(url)
-            # Ensure only one heavy tab is open by closing others if any leaked
-            while len(self.driver.window_handles) > 1:
-                self.driver.switch_to.window(self.driver.window_handles[-1])
-                self.driver.close()
-            self.driver.switch_to.window(self.driver.window_handles[0])
+            # Ensure only one heavy tab is open by closing others
+            pages = self.context.pages
+            if len(pages) > 1:
+                for p in pages[1:]:
+                    p.close()
 
-        except TimeoutException:
+            self.page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            return True
+
+        except PlaywrightTimeoutError:
             logging.error(f"Timeout while loading {url}. Quitting driver to free memory.")
             self.quit()
             return False
@@ -73,35 +88,61 @@ class BrowserAgent:
             logging.error(f"Error navigating to {url}: {e}. Quitting driver.")
             self.quit()
             return False
-        return True
 
-    def find_element(self, by, value, timeout=10):
-        if not self.driver:
-            return None
+    def click(self, selector, timeout=10000):
+        """Clicks an element with a timeout."""
+        if not self.page:
+            return False
         try:
-            element = WebDriverWait(self.driver, timeout).until(
-                EC.presence_of_element_located((by, value))
-            )
-            return element
-        except TimeoutException:
-            logging.error(f"Element {value} not found within {timeout}s.")
-            return None
+            self.page.click(selector, timeout=timeout)
+            return True
         except Exception as e:
-            logging.error(f"Error finding element {value}: {e}")
-            return None
+            logging.error(f"Error clicking element {selector}: {e}")
+            return False
+
+    def fill(self, selector, text, timeout=10000):
+        """Fills an input field."""
+        if not self.page:
+            return False
+        try:
+            self.page.fill(selector, text, timeout=timeout)
+            return True
+        except Exception as e:
+            logging.error(f"Error filling element {selector}: {e}")
+            return False
+
+    def get_text(self, selector, timeout=10000):
+        """Gets text content of an element."""
+        if not self.page:
+            return ""
+        try:
+            return self.page.text_content(selector, timeout=timeout)
+        except Exception as e:
+            logging.error(f"Error getting text from {selector}: {e}")
+            return ""
+
+    def pause_for_manual_login(self, platform_name):
+        """Pauses the workflow and prompts the user to log in manually."""
+        logging.warning(f"Login wall detected for {platform_name}. Agent requires manual account setup.")
+        input(f"Tolong masukkan detail akun login Anda di browser untuk {platform_name}. Tekan ENTER di terminal ini jika login sudah berhasil...")
+        logging.info(f"Resuming automation for {platform_name} after manual user confirmation.")
 
     def quit(self):
         """Explicitly closes the browser and forces garbage collection."""
-        if self.driver:
-            try:
-                self.driver.quit()
-                logging.info("Browser driver quit successfully.")
-            except Exception as e:
-                logging.error(f"Error while quitting driver: {e}")
-            finally:
-                self.driver = None
-                # Strict Exit Criteria: explicitly clear RAM
-                del self.driver
-                self.driver = None
-                gc.collect()
-                logging.info("Garbage collection triggered to clear RAM.")
+        try:
+            if self.context:
+                self.context.close()
+            if self.playwright:
+                self.playwright.stop()
+            logging.info("Playwright persistent context closed successfully.")
+        except Exception as e:
+            logging.error(f"Error while quitting driver: {e}")
+        finally:
+            self.page = None
+            self.context = None
+            self.browser = None
+            self.playwright = None
+
+            # Strict Exit Criteria: explicitly clear RAM
+            gc.collect()
+            logging.info("Garbage collection triggered to clear RAM.")

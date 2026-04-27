@@ -1,5 +1,5 @@
 requests==2.31.0
-selenium==4.15.2
+playwright==1.42.0
 psutil==5.9.8
 python-dotenv==1.0.1
 # sqlite3 and gc are built-in python libraries

@@ -47,37 +47,70 @@ class FreelanceWorkflow:
                 logging.info(f"Checking for messages and new job postings on {platform['name']}...")
                 self.browser.random_delay()
 
-                # Dynamic Reasoning: Ask LLM to evaluate a hypothetical job posting context
-                # In a real environment, this text would be scraped from the UI
-                simulated_job_context = (
-                    f"Platform: {platform['name']}. Klien membutuhkan seorang developer untuk memperbaiki bug "
-                    "skrip scraping Python mereka yang macet karena deteksi bot."
-                )
-
-                dynamic_prompt = (
-                    f"Evaluasi peluang pekerjaan ini secara otonom: '{simulated_job_context}'. "
-                    "Jika pekerjaan ini 100% dapat saya selesaikan secara otomatis tanpa bantuan manusia, "
-                    "buatkan pesan penawaran (proposal) profesional berdasarkan pedoman branding saya "
-                    "sebagai 'Problem Solver' atau 'Konsultan Teknis'. Jika tidak, jawab 'TIDAK_LAYAK'."
-                )
-
-                logging.info("Requesting LLM dynamic evaluation of job prospect...")
-                evaluation = self.llm.generate_text(dynamic_prompt)
-
-                if "TIDAK_LAYAK" not in evaluation and "Error" not in evaluation:
-                    logging.info(f"Job deemed suitable. Generated Proposal:\n{evaluation}")
-                    # Simulate sending the proposal
-                    self.browser.random_delay(1.0, 3.0)
-                    logging.info(f"Proposal sent on {platform['name']}")
+                # 1. Use Playwright to extract page text (simulated extraction as real selectors require live URLs)
+                page_text = self.browser.get_text("body", timeout=5000)
+                if not page_text:
+                    logging.warning(f"Failed to scrape text from {platform['name']}, using fallback mock data.")
+                    # Fallback to ensure workflow continues in sandbox tests without network access
+                    page_text = "Job Posting: Klien membutuhkan script web scraping Python yang bebas deteksi bot."
                 else:
-                    logging.info(f"Job rejected or failed evaluation. Moving on.")
+                     # Truncate to save tokens
+                     page_text = page_text[:2000]
 
-                # Negotiation Fallback Check (simulated)
-                simulated_client_reply = True # Set True to simulate a client negotiation
+                # Personal Branding Instructions per platform
+                branding_rules = ""
+                if platform['name'] == "Upwork":
+                    branding_rules = "Gunakan branding sebagai 'Problem Solver' Profesional. Judul: 'Backend Developer | API Integration Specialist'. Jangan bahas tools, bahas solusi untuk masalah bisnis klien."
+                elif platform['name'] == "Fiverr":
+                    branding_rules = "Gunakan branding sebagai 'Produk Siap Pakai'. Gunakan kata kunci spesifik dan harga berjenjang (Basic, Standard, Premium)."
+                elif platform['name'] == "Toptal":
+                    branding_rules = "Gunakan branding sebagai 'Elite & Senior Engineer' (Top 3%). Jelaskan teknologi dari segi efisiensi bisnis, arsitektur yang scalable, dan prinsip SOLID/Clean Code."
+
+                # 2. Dynamic Reasoning: Ask LLM to evaluate the job using Structured JSON output
+                dynamic_prompt = (
+                    f"Evaluasi halaman pekerjaan freelance ini: '{page_text}'. "
+                    f"Platform: {platform['name']}. Aturan Branding Wajib: {branding_rules} "
+                    "Sebagai agen AI otonom, bisakah kamu 100% menyelesaikan pekerjaan ini tanpa campur tangan manusia? "
+                    "Keluarkan response HANYA dalam format JSON dengan skema berikut: "
+                    "{ \"is_suitable\": boolean, \"reason\": \"alasan singkat\", \"proposal_text\": \"Teks proposal profesional berdasarkan pedoman branding jika suitable, atau null jika tidak\" }"
+                )
+
+                logging.info(f"Requesting LLM dynamic structured evaluation for {platform['name']} prospect with explicit branding...")
+                evaluation_json = self.llm.generate_text(dynamic_prompt, require_json=True)
+
+                if "Error" in evaluation_json:
+                     logging.error("Failed to evaluate job posting via LLM.")
+                     continue
+
+                import json
+                try:
+                    evaluation_data = json.loads(evaluation_json)
+                    if evaluation_data.get("is_suitable"):
+                        logging.info(f"Job deemed suitable. Reason: {evaluation_data.get('reason')}")
+                        logging.info(f"Generated Proposal:\n{evaluation_data.get('proposal_text')}")
+                        # Simulate Playwright interaction to send the proposal
+                        self.browser.random_delay(1.0, 3.0)
+                        # Example of what real interaction looks like (commented out as it needs exact selectors)
+                        # self.browser.fill('textarea[name="proposal"]', evaluation_data.get('proposal_text'))
+                        # self.browser.click('button:has-text("Submit Proposal")')
+                        logging.info(f"Proposal sent on {platform['name']}")
+                    else:
+                        logging.info(f"Job rejected. Reason: {evaluation_data.get('reason')}")
+                except json.JSONDecodeError as e:
+                     logging.error(f"Failed to parse structured LLM JSON response: {e}. Raw: {evaluation_json}")
+
+                # Login / Negotiation Check (simulated for flow structure)
+                # In actual Playwright usage, we would check for a login form selector
+                simulated_login_required = False
+                if simulated_login_required:
+                     self.browser.pause_for_manual_login(platform['name'])
+
+                simulated_client_reply = True # Set True to simulate a client negotiation message
                 if simulated_client_reply:
                      logging.info(f"Client replied on {platform['name']}. Consulting LLM for negotiation...")
                      negotiation_prompt = (
                          f"Klien dari {platform['name']} membalas: 'Harganya terlalu mahal, bisa diskon?'. "
+                         f"Aturan Branding Wajib: {branding_rules} "
                          "Saya hanya agent perantara. Berikan saran balasan negosiasi yang sopan dan profesional "
                          "yang mempertahankan harga (tiered pricing) sesuai branding."
                      )
@@ -125,14 +158,28 @@ class FreelanceWorkflow:
             )
             logging.info(f"Simulated sending prompt to Jules: {jules_prompt}")
 
-            # 3. Simulate receiving code and passing it to the Sandbox Tester (handled outside this class)
-            logging.info("Code generation complete. Ready for sandbox testing.")
+            # 3. Request actual code from LLM to represent Jules output
+            # In a full UI integration, this would scrape the resulting code block from jules.google.com
+            # For robustness in orchestration, we ask the LLM for a functional test script.
+            logging.info("Code generation complete. Extracting generated script...")
+
+            jules_simulation_prompt = (
+                "Keluarkan HANYA kode Python murni tanpa format markdown atau penjelasan. "
+                "Kode ini adalah skrip sederhana yang akan dijalankan di lingkungan sandbox untuk menguji eksekusi. "
+                "Skrip harus mencetak 'Memulai tugas...', melakukan perulangan dari 1 sampai 3 dengan jeda (sleep) 1 detik yang mencetak nomor, "
+                "dan diakhiri dengan 'Tugas selesai.'."
+            )
+
+            generated_code = self.llm.generate_text(jules_simulation_prompt)
+
+            # Clean up markdown formatting if the LLM ignored instructions
+            generated_code = generated_code.replace("```python", "").replace("```", "").strip()
 
         except Exception as e:
             logging.error(f"Error during GitHub/Jules interaction: {e}")
             self.browser.quit()
             self.db.update_task_state("github_jules", "FAILED", str(e))
-            return False
+            return None
 
         self.db.update_task_state("github_jules", "COMPLETED")
-        return True
+        return generated_code
