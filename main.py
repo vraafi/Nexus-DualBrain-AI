@@ -84,10 +84,14 @@ def run_agent_cycle():
             browser.quit()
         db.close()
 
-        # Safely delete local variables if they exist
-        for var in ['freelance_wf', 'tiktok_veo_wf', 'sandbox_tester', 'browser', 'llm', 'db', 'finance']:
-            if var in locals():
-                del locals()[var]
+        # Ensure explicit references are dropped so garbage collection works properly
+        freelance_wf = None
+        tiktok_veo_wf = None
+        sandbox_tester = None
+        browser = None
+        llm = None
+        db = None
+        finance = None
 
         gc.collect()
         logging.info("--- Cycle Complete. Memory cleared. ---")

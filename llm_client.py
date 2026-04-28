@@ -45,7 +45,7 @@ class LLMClient:
 
     def generate_text(self, prompt, retries=3, require_json=False):
 
-        system_prompt = (
+        system_instructions = (
             "Kamu adalah Nexus-AGI, agen otonom yang bertujuan menghasilkan pendapatan melalui pekerjaan freelance dan affiliate TikTok. "
             "Gunakan Thinking Mode untuk menganalisis setiap tugas secara mendalam sebelum mengambil tindakan. "
             "Prioritaskan pekerjaan yang dapat kamu selesaikan 100% otonom tanpa campur tangan manusia. "
@@ -53,8 +53,18 @@ class LLMClient:
             "tandai tugas tersebut sebagai BLOCKED dan cari tugas lain yang sepenuhnya otonom. "
             "Untuk pekerjaan freelance, fokus pada tugas Coding, Menulis, atau Analisis Data. "
             "Untuk TikTok affiliate, fokus pada produk yang memiliki aset visual yang jelas dan dapat diolah oleh Veo 3. "
-            "Selalu pertimbangkan efisiensi sumber daya dan hindari aktivitas yang dapat menyebabkan deteksi bot yang agresif.\n\n"
-            f"TUGAS SAAT INI:\n{prompt}"
+            "Selalu pertimbangkan efisiensi sumber daya dan hindari aktivitas yang dapat menyebabkan deteksi bot yang agresif."
+        )
+
+        # Explicit Gemma 4 Thinking Mode formatting as per documentation
+        formatted_prompt = (
+            f"<|turn>system\n"
+            f"<|think|><turn|>\n"
+            f"<|turn>user\n"
+            f"{system_instructions}\n\n"
+            f"TUGAS SAAT INI:\n{prompt}<turn|>\n"
+            f"<|turn>model\n"
+            f"<|channel>thought\n"
         )
 
         for _ in range(retries):
@@ -67,7 +77,7 @@ class LLMClient:
 
             headers = {'Content-Type': 'application/json'}
             data = {
-                "contents": [{"parts": [{"text": system_prompt}]}],
+                "contents": [{"parts": [{"text": formatted_prompt}]}],
                 "generationConfig": {}
             }
 
@@ -80,9 +90,16 @@ class LLMClient:
                 if response.status_code == 200:
                     self.key_usage_counts[api_key] += 1
                     result = response.json()
-                    # Parse the response structure (adjust if standard Google AI Studio structure varies for gemma)
+                    # Parse the response structure
                     try:
                         text = result['candidates'][0]['content']['parts'][0]['text']
+
+                        # Strip thought channel tags if present to extract final answer
+                        if "<channel|>" in text:
+                            parts = text.split("<channel|>")
+                            if len(parts) > 1:
+                                text = parts[1].split("<turn|>")[0].strip()
+
                         return text
                     except (KeyError, IndexError) as e:
                         logging.error(f"Failed to parse LLM response: {result}. Error: {e}")
