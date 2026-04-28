@@ -23,17 +23,16 @@ logging.basicConfig(
 )
 
 def run_agent_cycle():
-    """Executes a single, strictly sequential cycle of the agent workflows."""
+    """Executes a single, strictly sequential cycle of the agent workflows with self-healing isolation."""
     logging.info("--- Starting New Agent Cycle ---")
     db = DatabaseManager()
+    finance = FinancialModule(db_path="agent_state.db")
     llm = LLMClient(api_keys=[]) # Will be populated by freelance workflow check
     browser = BrowserAgent()
 
     try:
         # Instantiate workflows
-        freelance_wf = FreelanceWorkflow(browser, llm, db)
-        tiktok_veo_wf = TikTokVeoWorkflow(browser, llm, db)
-        sandbox_tester = SandboxTester(db)
+        freelance_wf = FreelanceWorkflow(browser, llm, db, finance)
 
         # 1. Freelance Platform Checks (Messenger Role) & API Keys
         freelance_wf.load_api_keys()
@@ -42,32 +41,42 @@ def run_agent_cycle():
         freelance_wf.handle_freelance_platforms()
 
         # 2. Client Coding Task via GitHub and Jules
-        # Simulating finding a task for "pelanggan_01"
         client_id = "pelanggan_01"
         logging.info(f"Executing GitHub and Jules workflow for {client_id}...")
         generated_code = freelance_wf.manage_github_and_jules(client_id)
 
         if generated_code:
              logging.info(f"Running sandbox tests for {client_id}...")
-             # For the dev test, we set duration to 1 minute to avoid a 15-minute wait
-             sandbox_tester.test_and_monitor_code(client_id, generated_code, duration_minutes=15)
+             sandbox_tester = SandboxTester(db)
+             success = sandbox_tester.test_and_monitor_code(client_id, generated_code, duration_minutes=15)
+             if success:
+                 finance.record_transaction("GitHub/Jules", "Task Completed", 50.0, f"Successful autonomous task delivery for {client_id}")
+    except Exception as e:
+        logging.error(f"Error isolated in Freelance workflow cycle: {e}")
 
+    try:
         # Explicit memory clear between major workflow sections
         browser.quit()
-        gc.collect()
+    except:
+        pass
+    gc.collect()
 
+    try:
         # 3. TikTok & Veo 3 Video Generation Workflow
         logging.info("Executing TikTok and Veo 3 Video Workflow...")
         # Re-initialize browser for next isolated phase
         browser = BrowserAgent()
-        tiktok_veo_wf.browser = browser # update reference
+        tiktok_veo_wf = TikTokVeoWorkflow(browser, llm, db, finance)
 
         if tiktok_veo_wf.analyze_and_download_tiktok_trends():
             if tiktok_veo_wf.generate_prompts_and_process_images():
-                tiktok_veo_wf.generate_veo_videos_and_send_telegram()
+                video_count = tiktok_veo_wf.generate_veo_videos_and_send_telegram()
+                if video_count:
+                    finance.record_transaction("TikTok Affiliate", "Videos Sent", 10.0, "Successful affiliate video generation sequence")
 
     except Exception as e:
-        logging.error(f"Critical error in agent cycle: {e}")
+        logging.error(f"Error isolated in TikTok Veo workflow cycle: {e}")
+
     finally:
         # Strict Exit Criteria: Clean up all resources
         logging.info("Executing end-of-cycle cleanup...")

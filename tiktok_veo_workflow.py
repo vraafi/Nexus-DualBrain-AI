@@ -5,10 +5,11 @@ import requests
 import shutil
 
 class TikTokVeoWorkflow:
-    def __init__(self, browser_agent, llm_client, database):
+    def __init__(self, browser_agent, llm_client, database, finance_module):
         self.browser = browser_agent
         self.llm = llm_client
         self.db = database
+        self.finance = finance_module
         self.videos_downloaded = []
         self.product_data = [] # Stores dicts with link, prompts, and local image paths
 
@@ -297,6 +298,8 @@ class TikTokVeoWorkflow:
                             "path": veo_path,
                             "product_link": product["tiktok_link"]
                         })
+                        # Optional: record intermediate success per video
+                        self.finance.record_transaction("Veo 3", "Video Generated", 0.0, f"Generated video for {product['product_name']}")
                     else:
                         logging.error(f"Veo generation failed reflection check for {video_filename} (size <= 10KB or missing).")
 

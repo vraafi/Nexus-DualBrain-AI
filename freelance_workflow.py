@@ -4,10 +4,11 @@ import os
 from dotenv import load_dotenv
 
 class FreelanceWorkflow:
-    def __init__(self, browser_agent, llm_client, database):
+    def __init__(self, browser_agent, llm_client, database, finance_module):
         self.browser = browser_agent
         self.llm = llm_client
         self.db = database
+        self.finance = finance_module
         load_dotenv()
 
     def load_api_keys(self):
@@ -104,6 +105,9 @@ class FreelanceWorkflow:
                             clicked = self.browser.click('button:has-text("Submit"), button:has-text("Send"), button[type="submit"]')
                             if clicked:
                                 logging.info(f"Proposal successfully submitted on {platform['name']}")
+                                # Record a projected or actual transaction based on platform logic
+                                # In this case, we might record the bid amount or just a success metric
+                                self.finance.record_transaction(platform['name'], "Proposal Submitted", 0.0, "Proposal successfully entered into system")
                             else:
                                 logging.warning(f"Filled proposal but failed to click submit on {platform['name']}")
                         else:
