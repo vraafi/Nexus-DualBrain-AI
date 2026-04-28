@@ -51,12 +51,11 @@ class FreelanceWorkflow:
                 logging.info(f"Checking for messages and new job postings on {platform['name']}...")
                 self.browser.random_delay()
 
-                # 1. Use Playwright to extract page text (simulated extraction as real selectors require live URLs)
+                # 1. Use Playwright to extract page text
                 page_text = self.browser.get_text("body", timeout=5000)
                 if not page_text:
-                    logging.warning(f"Failed to scrape text from {platform['name']}, using fallback mock data.")
-                    # Fallback to ensure workflow continues in sandbox tests without network access
-                    page_text = "Job Posting: Klien membutuhkan script web scraping Python yang bebas deteksi bot."
+                    logging.error(f"Failed to scrape job posting text from {platform['name']}. Failing task for real autonomy.")
+                    continue
                 else:
                      # Truncate to save tokens
                      page_text = page_text[:2000]
@@ -167,7 +166,7 @@ class FreelanceWorkflow:
             # Check for GitHub login wall
             if "Sign in" in self.browser.get_text("body", timeout=3000) or self.browser.get_text('input[name="login"]', timeout=2000):
                 self.browser.pause_for_manual_login("GitHub")
-                self.browser.get("https://github.com/new") # Reload after login
+                self.browser.get("https://github.com/new") # Reload after manual login
                 self.browser.random_delay()
 
             logging.info("Filling GitHub repository creation form...")
@@ -225,17 +224,9 @@ class FreelanceWorkflow:
                  logging.warning("Could not find prompt input box on Jules. Falling back to LLM simulation.")
                  generated_code = None
 
-            # Fallback for orchestration robustness if UI scraping fails (e.g., UI changed or sandbox block)
             if not generated_code:
-                logging.info("Using LLM to generate functional code string as UI extraction fallback...")
-                jules_simulation_prompt = (
-                    "Keluarkan HANYA kode Python murni tanpa format markdown atau penjelasan. "
-                    "Kode ini adalah skrip sederhana yang akan dijalankan di lingkungan sandbox untuk menguji eksekusi. "
-                    "Skrip harus mencetak 'Memulai tugas...', melakukan perulangan dari 1 sampai 3 dengan jeda (sleep) 1 detik yang mencetak nomor, "
-                    "dan diakhiri dengan 'Tugas selesai.'."
-                )
-                generated_code = self.llm.generate_text(jules_simulation_prompt)
-                generated_code = generated_code.replace("```python", "").replace("```", "").strip()
+                logging.error("Failed to extract generated code from Jules UI. Task failed.")
+                raise Exception("Missing generated code.")
 
         except Exception as e:
             logging.error(f"Error during GitHub/Jules interaction: {e}")

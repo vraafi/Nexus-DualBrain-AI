@@ -18,13 +18,42 @@ class TikTokVeoWorkflow:
         logging.info("Starting TikTok trend analysis and download step...")
         self.db.update_task_state("tiktok_download", "IN_PROGRESS")
 
-        # Example logic to represent fetching trend links (in a real scenario, this would scrape TikTok)
-        # We simulate having found 3 trend URLs.
-        trend_urls = [
-            "https://www.tiktok.com/@example/video/1234567890",
-            "https://www.tiktok.com/@example/video/0987654321",
-            "https://www.tiktok.com/@example/video/1122334455"
-        ]
+        # Actual Trend Discovery via Playwright Web Scraping
+        logging.info("Navigating to TikTok Explore to find real trending videos...")
+        success = self.browser.get("https://www.tiktok.com/explore")
+        if not success:
+             logging.error("Failed to load TikTok Explore page.")
+             return False
+
+        self.browser.random_delay(3.0, 5.0) # Wait for dynamic JS content to load
+
+        trend_urls = []
+        try:
+            # Scrape anchor tags containing video links on the explore page
+            # TikTok video links usually follow the pattern /@username/video/ID
+            elements = self.browser.page.query_selector_all('a[href*="/video/"]')
+
+            for el in elements:
+                href = el.get_attribute("href")
+                if href and "/video/" in href:
+                    # Resolve relative URLs to absolute
+                    if href.startswith("/"):
+                        href = f"https://www.tiktok.com{href}"
+                    if href not in trend_urls:
+                        trend_urls.append(href)
+
+                if len(trend_urls) >= 3:
+                     break
+
+        except Exception as e:
+            logging.error(f"Error scraping TikTok trends: {e}")
+
+        if not trend_urls:
+            logging.warning("Failed to scrape any trending video URLs from TikTok. Failing task.")
+            self.db.update_task_state("tiktok_download", "FAILED", "Scraping returned no URLs.")
+            return False
+
+        logging.info(f"Successfully scraped {len(trend_urls)} real trend URLs from TikTok.")
 
         download_dir = os.path.join(os.getcwd(), "downloads")
         os.makedirs(download_dir, exist_ok=True)
@@ -140,7 +169,7 @@ class TikTokVeoWorkflow:
             # Check for Google login wall
             if "Sign in" in self.browser.get_text("body", timeout=3000) or self.browser.get_text('input[type="email"]', timeout=2000):
                 self.browser.pause_for_manual_login("Gemini")
-                self.browser.get(gemini_url)
+                self.browser.get(gemini_url) # Reload to apply state
                 self.browser.random_delay()
 
             for item in self.product_data:
@@ -233,7 +262,7 @@ class TikTokVeoWorkflow:
             # Check for login wall
             if "Sign in" in self.browser.get_text("body", timeout=3000) or self.browser.get_text('input[type="email"]', timeout=2000):
                 self.browser.pause_for_manual_login("Veo 3 (Google)")
-                self.browser.get(veo_url)
+                self.browser.get(veo_url) # Reload
                 self.browser.random_delay()
 
             for product in self.product_data:
