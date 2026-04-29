@@ -7,3 +7,8 @@ client_sandbox/
 downloads/
 veo_outputs/
 browser_state.json
+
+# Security & Identity
+storage/
+*.key
+*.enc

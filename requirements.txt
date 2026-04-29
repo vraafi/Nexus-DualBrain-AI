@@ -1,6 +1,8 @@
 requests==2.31.0
 playwright==1.42.0
+playwright-stealth==1.0.6
 psutil==5.9.8
 python-dotenv==1.0.1
 pytz==2024.1
+cryptography==42.0.5
 # sqlite3 and gc are built-in python libraries
