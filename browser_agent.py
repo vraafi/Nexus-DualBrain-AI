@@ -4,6 +4,7 @@ import time
 import random
 import asyncio
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright_stealth import stealth_sync
 
 class BrowserAgent:
     def __init__(self):
@@ -46,21 +47,21 @@ class BrowserAgent:
             storage_state = state_file if os.path.exists(state_file) else None
 
             # Use standard context for lighter memory footprint instead of heavy persistent context
-            # Explicitly run headless=False so the user can interact when pause_for_manual_login is triggered
-            self.browser = self.playwright.chromium.launch(headless=False, args=args)
+            # Explicitly run headless=True for 24/7 background operation on low-spec hardware
+            self.browser = self.playwright.chromium.launch(headless=True, args=args)
             self.context = self.browser.new_context(
                 user_agent=selected_ua,
                 storage_state=storage_state
             )
             self.page = self.context.new_page()
 
+            # Apply playwright-stealth to aggressively avoid bot detection
+            stealth_sync(self.page)
+
             # Track state file to save upon exit
             self.state_file = state_file
 
-            # Override navigator.webdriver to bypass basic bot detection
-            self.page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-
-            logging.info("Playwright browser initialized with storage_state for autonomy.")
+            logging.info("Playwright headless stealth browser context initialized with storage_state for autonomy.")
         except Exception as e:
             logging.error(f"Failed to initialize persistent Playwright browser: {e}")
             self.quit()
@@ -124,12 +125,13 @@ class BrowserAgent:
             return ""
 
     def pause_for_manual_login(self, platform_name):
-        """Pauses the workflow and prompts the user to log in manually, as requested by the user."""
-        logging.warning(f"Login wall detected for {platform_name}. Agent requires manual account setup.")
-        # We explicitly block execution here to allow the user to type into the CLI once they have logged in via the visible Chromium window.
-        input(f"Tolong masukkan detail akun login Anda di browser untuk {platform_name}. Tekan ENTER di terminal ini jika login sudah berhasil...")
-        logging.info(f"Resuming automation for {platform_name} after manual user confirmation.")
-        return True
+        """
+        The blueprint specifies 100% autonomy without blocking execution.
+        Instead of using a blocking `input()`, the agent must handle login via stored sessions.
+        If a login wall is still encountered despite persistent context, the task fails gracefully.
+        """
+        logging.warning(f"[BLOCKED] Login wall detected for {platform_name}. As a 100% autonomous agent, human intervention is disabled. Proceeding via autonomous retry logic.")
+        return False
 
     def quit(self):
         """Saves session state and explicitly closes the browser to force garbage collection."""

@@ -110,12 +110,8 @@ def main():
     """Main orchestration loop (18/7 cycle with dynamic timezone rest)."""
     logging.info("Nexus-DualBrain-AI Agent Started.")
 
-    # Using a finite loop for testing, in real scenario this would be `while True:`
-    # We will simulate 1 cycle followed by a short rest.
-    test_mode_cycles = 1
-    current_cycle = 0
-
-    while current_cycle < test_mode_cycles:
+    # 24/7 Continuous Loop for Full Autonomy
+    while True:
         if is_us_business_hours():
              logging.info("Current time is within US business hours (09:00-15:00 EST). Entering 6-hour sleep mode to avoid bot detection.")
              # Fulfill user requirement to sleep during US peak hours
@@ -130,17 +126,14 @@ def main():
             continue
 
         run_agent_cycle()
-        current_cycle += 1
 
-        if current_cycle < test_mode_cycles: # Don't sleep after the very last test cycle
-            rest_seconds = 7200 # Standard 2 hours cooldown after a full load cycle
-            logging.info(f"Hardware cooling phase. Sleeping for {rest_seconds} seconds...")
-            # Reduced sleep purely for the sandbox testing phase of this refactor
-            simulation_sleep = 5
-            logging.info(f"SIMULATION: Sleeping {simulation_sleep}s instead of {rest_seconds}s for sandbox dev test.")
-            time.sleep(simulation_sleep)
-
-    logging.info("Agent process terminated gracefully.")
+        # Hardware cooldown after a full cycle load
+        rest_seconds = 7200 # Standard 2 hours cooldown
+        logging.info(f"Hardware cooling phase. Sleeping for {rest_seconds} seconds...")
+        # Reduced sleep purely for the sandbox testing phase of this refactor
+        simulation_sleep = 5
+        logging.info(f"SIMULATION: Sleeping {simulation_sleep}s instead of {rest_seconds}s for sandbox dev test.")
+        time.sleep(simulation_sleep)
 
 if __name__ == "__main__":
     main()
