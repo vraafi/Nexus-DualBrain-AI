@@ -12,7 +12,7 @@ class FreelanceWorkflow:
         self.finance = finance_module
         self.identity_vault = IdentityManager()
         # Create initial test data just for the sandbox environment if empty
-        if not os.path.exists("storage/identity_vault.enc"):
+        if not os.path.exists("ssd_storage/identity_vault.enc"):
             self.identity_vault.write_initial_mock_data()
         load_dotenv()
 
@@ -131,6 +131,7 @@ class FreelanceWorkflow:
                      password_field = self.browser.get_text('input[type="password"]', timeout=2000)
                      if password_field is not None:
                          self.browser.pause_for_manual_login(platform['name'])
+                         continue # Abort processing for this platform since we aren't logged in
 
                 # Check for KYC / Verification Walls
                 kyc_indicators = ["verify your identity", "upload id", "kyc", "identity verification"]
@@ -172,33 +173,34 @@ class FreelanceWorkflow:
         self.db.update_task_state("github_jules", "IN_PROGRESS")
 
         try:
-            # 1. Create GitHub Repository using actual UI interactions
-            logging.info(f"Navigating to GitHub to create repo for {client_id}...")
-            success = self.browser.get("https://github.com/new")
-            if not success:
-                raise Exception("Failed to load GitHub.")
-
-            self.browser.random_delay()
-
-            # Check for GitHub login wall
-            if "Sign in" in self.browser.get_text("body", timeout=3000) or self.browser.get_text('input[name="login"]', timeout=2000):
-                self.browser.pause_for_manual_login("GitHub")
-                self.browser.get("https://github.com/new") # Reload after manual login
-                self.browser.random_delay()
-
-            logging.info("Filling GitHub repository creation form...")
-            # Fill repository name
-            repo_filled = self.browser.fill('input[name="repository[name]"], input[id="repository_name"]', client_id)
-            if not repo_filled:
-                logging.warning("Could not find repository name input field. Skipping repository creation.")
+            # 1. Create GitHub Repository using Official REST API
+            # This replaces the fragile Playwright scraping with robust, programmatic AGI interaction.
+            github_token = os.getenv("GITHUB_TOKEN")
+            if not github_token:
+                logging.warning("GITHUB_TOKEN not found in .env. Skipping GitHub repository creation API call.")
             else:
-                self.browser.random_delay(1.0, 2.0)
-                # Click create repository button
-                created = self.browser.click('button:has-text("Create repository"), button[type="submit"]')
-                if created:
-                    logging.info(f"Successfully initiated creation of repository for {client_id}.")
-                else:
-                    logging.warning("Could not click 'Create repository' button.")
+                logging.info(f"Using GitHub REST API to create repository for {client_id}...")
+                import requests
+                headers = {
+                    "Authorization": f"token {github_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                }
+                data = {
+                    "name": client_id,
+                    "description": f"Repository automatically generated for client {client_id} by Nexus-DualBrain-AI",
+                    "private": True
+                }
+
+                try:
+                    response = requests.post("https://api.github.com/user/repos", headers=headers, json=data, timeout=30)
+                    if response.status_code == 201:
+                        logging.info(f"Successfully created GitHub repository: {response.json().get('html_url')}")
+                    elif response.status_code == 422:
+                        logging.info(f"GitHub repository {client_id} already exists or name is invalid.")
+                    else:
+                        logging.error(f"GitHub API Error: {response.status_code} - {response.text}")
+                except Exception as req_err:
+                    logging.error(f"Network error while calling GitHub API: {req_err}")
 
             # 2. Interact with Jules for coding using actual UI interactions
             logging.info("Navigating to Jules (https://jules.google.com) ...")
@@ -211,8 +213,7 @@ class FreelanceWorkflow:
             # Check for Google login wall on Jules
             if "Sign in" in self.browser.get_text("body", timeout=3000) or self.browser.get_text('input[type="email"]', timeout=2000):
                 self.browser.pause_for_manual_login("Jules/Google")
-                self.browser.get("https://jules.google.com")
-                self.browser.random_delay()
+                return None # Early exit as we can't scrape without login
 
             jules_prompt = (
                 f"Tugas: Buatkan kode untuk client {client_id}. "

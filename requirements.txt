@@ -6,3 +6,5 @@ python-dotenv==1.0.1
 pytz==2024.1
 cryptography==42.0.5
 # sqlite3 and gc are built-in python libraries
+opencv-python-headless==4.9.0.80
+numpy<2

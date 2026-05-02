@@ -11,9 +11,17 @@ class ResourceMonitor:
         """Checks if current hardware resources (RAM, CPU, Disk I/O) are safe for heavy tasks."""
         ram_percent = psutil.virtual_memory().percent
         cpu_percent = psutil.cpu_percent(interval=0.5)
-        disk_usage = psutil.disk_usage('/').percent
 
-        logging.info(f"Resource Monitor - RAM: {ram_percent}%, CPU: {cpu_percent}%, Disk: {disk_usage}%")
+        # Check SSD (root)
+        ssd_usage = psutil.disk_usage('/').percent
+
+        # Check HDD (using the configured hdd_storage folder, assuming it maps to the HDD mount)
+        hdd_path = os.path.join(os.getcwd(), "hdd_storage")
+        os.makedirs(hdd_path, exist_ok=True)
+        # Fallback to root if hdd_storage isn't a mount, otherwise psutil checks the mount
+        hdd_usage = psutil.disk_usage(hdd_path).percent
+
+        logging.info(f"Resource Monitor - RAM: {ram_percent}%, CPU: {cpu_percent}%, SSD: {ssd_usage}%, HDD: {hdd_usage}%")
 
         if ram_percent > self.ram_threshold:
             logging.warning(f"RAM usage ({ram_percent}%) exceeds strict threshold ({self.ram_threshold}%). Attempting aggressive cleanup...")
@@ -27,11 +35,11 @@ class ResourceMonitor:
                  logging.info("RAM recovered after aggressive process termination. Proceeding carefully.")
 
         # Add basic disk space check to prevent crashes on the 500GB HDD constraint
-        if disk_usage > 95.0:
-             logging.warning(f"Disk usage ({disk_usage}%) critically high. Attempting to clear temporary storage...")
+        if hdd_usage > 95.0 or ssd_usage > 95.0:
+             logging.warning(f"Disk usage (SSD: {ssd_usage}%, HDD: {hdd_usage}%) critically high. Attempting to clear temporary storage...")
              self._clear_storage_dirs()
              # Re-check after cleanup
-             if psutil.disk_usage('/').percent > 95.0:
+             if psutil.disk_usage('/').percent > 95.0 or psutil.disk_usage(hdd_path).percent > 95.0:
                  logging.error("Disk usage remains critical after cleanup. Unsafe to proceed.")
                  return False
 
@@ -58,8 +66,8 @@ class ResourceMonitor:
             logging.error(f"Error during aggressive RAM cleanup: {e}")
 
     def _clear_storage_dirs(self):
-        """Actively clears downloaded and generated files to free up disk space."""
-        dirs_to_clear = ["downloads", "veo_outputs"]
+        """Actively clears downloaded and generated files to free up disk space from the HDD."""
+        dirs_to_clear = [os.path.join("hdd_storage", "downloads"), os.path.join("hdd_storage", "veo_outputs")]
         for d in dirs_to_clear:
             dir_path = os.path.join(os.getcwd(), d)
             if os.path.exists(dir_path):
