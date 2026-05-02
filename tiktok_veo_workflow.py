@@ -122,20 +122,18 @@ class TikTokVeoWorkflow:
         self.db.update_task_state("gemini_interaction", "IN_PROGRESS")
 
         # 1. Goal-oriented Dynamic Prompt Generation
-        # Context would normally be extracted from the TikTok videos (e.g. hashtags, captions, visual themes)
-        simulated_context = "Trend: Video gaya hidup minimalis, produk: botol minum estetis, target: Gen Z yang peduli lingkungan."
-
+        # Generating prompt asking for structured JSON output for downstream tasks
         dynamic_prompt = (
-            f"Berdasarkan konteks tren berikut: '{simulated_context}', "
+            "Berdasarkan tren TikTok afiliasi saat ini (produk gaya hidup minimalis), "
             "tujuan kita adalah membuat video afiliasi TikTok dengan konversi tinggi menggunakan Veo 3. "
-            "1. Identifikasi produk utama.\n"
-            "2. Buat 3 prompt teks spesifik untuk AI Video Generator (Veo 3) dengan aspect ratio 9:16. "
-            "Setiap prompt harus memiliki angle kamera yang berbeda (misal: close-up, panning, wide-shot) "
-            "dan estetika yang kuat yang sesuai dengan target audiens."
+            "Keluarkan HANYA dalam format JSON dengan skema berikut: "
+            "{ \"products\": [ "
+            "{ \"product_name\": \"nama produk\", \"tiktok_link\": \"https://tiktok...\", \"prompts\": [\"prompt 1\", \"prompt 2\", \"prompt 3\"], \"local_image_path\": \"downloads/raw_product.jpg\" }"
+            "] }"
         )
 
         logging.info("Calling LLM API for dynamic goal-oriented prompt generation...")
-        llm_response = self.llm.generate_text(dynamic_prompt)
+        llm_response = self.llm.generate_text(dynamic_prompt, require_json=True)
 
         if "Error" in llm_response:
             logging.error("Failed to get response from Gemini.")
@@ -144,16 +142,17 @@ class TikTokVeoWorkflow:
 
         logging.info(f"Received prompts from Gemini: {llm_response[:100]}...")
 
-        # Simulate parsing the LLM response to get product data
-        # In a real scenario, we'd use regex or structured output to extract this safely
-        self.product_data = [
-            {
-                "product_name": "Simulated Product 1",
-                "tiktok_link": "https://www.tiktok.com/@example/video/123",
-                "prompts": ["Close up aesthetic shot", "Wide angle cinematic", "Macro detail view"],
-                "local_image_path": "downloads/raw_product_1.jpg"
-            }
-        ]
+        # Parse the structured JSON response
+        import json
+        try:
+             parsed_response = json.loads(llm_response)
+             self.product_data = parsed_response.get("products", [])
+             if not self.product_data:
+                  logging.warning("LLM returned no product data.")
+                  return False
+        except json.JSONDecodeError as e:
+             logging.error(f"Failed to parse product data JSON from LLM: {e}")
+             return False
 
         # 2. Use "Nano Banana" menu logic for background removal via actual UI interaction
         # The prompt specifies going to the "website gemini" and pressing Nano Banana.
@@ -173,13 +172,10 @@ class TikTokVeoWorkflow:
                 self.browser.random_delay()
 
             for item in self.product_data:
-                # To test the flow locally without crashing on missing files, we use a placeholder image if the raw path doesn't exist
                 raw_image_path = item.get("local_image_path")
-                if not os.path.exists(raw_image_path):
-                     # Create a dummy valid small image just to allow the upload flow to be tested
-                     with open(raw_image_path, "wb") as f:
-                         # 1x1 transparent GIF
-                         f.write(b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
+                if not raw_image_path or not os.path.exists(raw_image_path):
+                     logging.error(f"Cannot process image: {raw_image_path} does not exist. Failing task.")
+                     continue
 
                 logging.info(f"Processing image {raw_image_path} through Gemini Nano Banana...")
 
