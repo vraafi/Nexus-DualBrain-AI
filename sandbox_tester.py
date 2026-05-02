@@ -33,29 +33,73 @@ class SandboxTester:
         except Exception as e:
             logging.error(f"Error during sandbox cleanup: {e}")
 
+    def _extract_dynamic_dependencies(self, code_string):
+        """Parses the generated code for dependency comments and standard imports."""
+        dependencies = set(["flake8==7.0.0"]) # Always include flake8 for static analysis
+
+        # Mapping standard library modules to avoid pip installing them
+        standard_libs = set([
+            "os", "sys", "time", "datetime", "json", "csv", "math", "random",
+            "re", "urllib", "subprocess", "logging", "threading", "multiprocessing",
+            "collections", "itertools", "functools", "shutil", "sqlite3"
+        ])
+
+        for line in code_string.split('\n'):
+            line = line.strip()
+            # 1. Look for explicit comments like # DEPENDENCIES: requests, pandas
+            if line.upper().startswith("# DEPENDENCIES:"):
+                deps = line.split(":", 1)[1].split(",")
+                for d in deps:
+                    clean_dep = d.strip()
+                    if clean_dep:
+                        dependencies.add(clean_dep)
+
+            # 2. Fallback: Parse standard import statements
+            elif line.startswith("import ") or line.startswith("from "):
+                parts = line.split()
+                if len(parts) > 1:
+                    module_name = parts[1].split(".")[0] # Get root module (e.g., from bs4 import BeautifulSoup -> bs4)
+                    if module_name and module_name not in standard_libs:
+                        # Add simple mapping for common packages where import name != package name
+                        if module_name == "bs4":
+                            dependencies.add("beautifulsoup4")
+                        elif module_name == "cv2":
+                            dependencies.add("opencv-python-headless")
+                        elif module_name == "dotenv":
+                            dependencies.add("python-dotenv")
+                        else:
+                            dependencies.add(module_name)
+
+        return list(dependencies)
+
     def test_and_monitor_code(self, client_id, code_string, duration_minutes=15):
-        """Runs the generated code in a subprocess within the sandbox for a specified duration."""
+        """Runs the generated code in a subprocess within the sandbox for a specified duration.
+        Returns a tuple (success_boolean, error_log_string) for self-correction.
+        """
         self.db.update_task_state(f"sandbox_test_{client_id}", "IN_PROGRESS")
         self.setup_sandbox()
 
         if not code_string:
              logging.error(f"No code provided to sandbox tester for {client_id}.")
              self.db.update_task_state(f"sandbox_test_{client_id}", "FAILED", "No code provided.")
-             return False
+             return False, "No code provided."
 
         logging.info(f"Writing generated code into sandbox for {client_id}...")
         test_file = os.path.join(self.sandbox_dir, "app.py")
         with open(test_file, "w") as f:
             f.write(code_string)
 
-        # Write a simple requirements file if the LLM output hints at external dependencies
-        # In a fully AGI scenario, this would be generated alongside the code
+        # Dynamically build requirements file
+        dynamic_deps = self._extract_dynamic_dependencies(code_string)
+        logging.info(f"Dynamic dependencies detected: {dynamic_deps}")
         req_file = os.path.join(self.sandbox_dir, "requirements.txt")
         with open(req_file, "w") as f:
-            f.write("flake8==7.0.0\n")
+            for dep in dynamic_deps:
+                f.write(f"{dep}\n")
 
         logging.info(f"Starting Static Analysis and Subprocess execution for up to {duration_minutes} minutes...")
 
+        error_logs = ""
         try:
             timeout_seconds = duration_minutes * 60
             container_name = f"sandbox_{client_id}_{int(time.time())}"
@@ -63,7 +107,8 @@ class SandboxTester:
             # Use a slightly more capable image and install dependencies first
             # We use an entrypoint script to run flake8 validation then execute the code
             entrypoint_script = """
-            pip install -r requirements.txt > /dev/null 2>&1
+            echo 'Installing dynamic dependencies...'
+            pip install -r requirements.txt
             echo 'Running Static Analysis (flake8)...'
             flake8 app.py --max-line-length=120
             if [ $? -ne 0 ]; then
@@ -85,11 +130,11 @@ class SandboxTester:
             docker_cmd = [
                 "docker", "run", "--rm",
                 "--name", container_name,
-                "--memory", "350m",  # Restrict memory to protect host
+                "--memory", "400m",  # Restrict memory to protect host (slightly raised for pip compiles)
                 "--cpus", "0.5",     # Restrict CPU
                 "-v", f"{self.sandbox_dir}:/usr/src/app", # Mount directory
                 "-w", "/usr/src/app",
-                "python:3.12-alpine",
+                "python:3.12-slim",  # Switched from alpine (musl) to slim (glibc) for wheel compatibility
                 "sh", "entry.sh"
             ]
 
@@ -104,14 +149,14 @@ class SandboxTester:
 
             logging.info(f"Docker process exited with return code: {process.returncode}")
             logging.info(f"STDOUT: {process.stdout.strip()}")
-            if process.stderr:
-                logging.warning(f"STDERR: {process.stderr.strip()}")
 
             if process.returncode == 0:
                  logging.info("Code passed both Static Analysis and Runtime Execution.")
                  test_passed = True
             else:
                  logging.error("Code failed Static Analysis or Runtime Execution.")
+                 # Capture both stdout and stderr for the LLM to understand what went wrong
+                 error_logs = f"Exit Code: {process.returncode}\nSTDOUT:\n{process.stdout.strip()}\nSTDERR:\n{process.stderr.strip()}"
                  test_passed = False
 
         except subprocess.TimeoutExpired:
@@ -121,6 +166,7 @@ class SandboxTester:
             subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
         except Exception as e:
             logging.error(f"Sandbox execution error: {e}")
+            error_logs = f"Sandbox execution error: {e}"
             test_passed = False
 
             # Attempt cleanup on error
@@ -135,8 +181,8 @@ class SandboxTester:
         if test_passed:
             logging.info(f"Sandbox testing for {client_id} completed successfully.")
             self.db.update_task_state(f"sandbox_test_{client_id}", "COMPLETED", "Code executed successfully.")
-            return True
+            return True, ""
         else:
             logging.error(f"Sandbox testing for {client_id} failed.")
             self.db.update_task_state(f"sandbox_test_{client_id}", "FAILED", "Errors encountered during execution.")
-            return False
+            return False, error_logs

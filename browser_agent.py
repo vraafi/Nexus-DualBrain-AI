@@ -72,6 +72,15 @@ class BrowserAgent:
             self.quit()
             raise
 
+    def save_state(self):
+        """Saves current cookies and local storage to persist authentication state."""
+        if self.context and hasattr(self, 'state_file') and self.state_file:
+            try:
+                self.context.storage_state(path=self.state_file)
+                logging.info(f"Browser state successfully saved to {self.state_file}")
+            except Exception as e:
+                logging.error(f"Failed to save browser state: {e}")
+
     def restart_in_headed_mode_for_login(self, platform_name):
         """Temporarily restarts the browser in UI mode to allow the user to clear a login/CAPTCHA wall, then reverts."""
         logging.warning(f"Login/CAPTCHA wall detected for {platform_name}. Switching to Headed UI mode for manual intervention...")

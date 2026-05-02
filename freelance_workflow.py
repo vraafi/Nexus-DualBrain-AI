@@ -45,6 +45,8 @@ class FreelanceWorkflow:
             {"name": "Toptal", "url": "https://www.toptal.com"}
         ]
 
+        accepted_jobs = []
+
         try:
             for platform in platforms:
                 logging.info(f"Navigating to {platform['name']} ({platform['url']})...")
@@ -98,7 +100,7 @@ class FreelanceWorkflow:
                     "3. Verifikasi Tools: Apakah kita memerlukan kredensial pihak ketiga yang tidak kita miliki (misal API AWS, server khusus klien)? Jika ya, kamu tidak otonom.\n\n"
                     "Tentukan skor otonomi dari 0-100%. Kamu HANYA boleh mengambil pekerjaan dengan skor otonomi > 95%.\n"
                     "Keluarkan response HANYA dalam format JSON dengan skema berikut: "
-                    "{ \"autonomy_score\": integer, \"is_suitable\": boolean, \"reason\": \"alasan singkat berdasarkan 3 tahap\", \"proposal_text\": \"Teks proposal profesional berdasarkan pedoman branding jika suitable, atau null jika tidak\" }"
+                    "{ \"autonomy_score\": integer, \"is_suitable\": boolean, \"reason\": \"alasan singkat berdasarkan 3 tahap\", \"job_summary\": \"Ringkasan spesifikasi teknis dari pekerjaan ini (digunakan untuk ngoding nanti)\", \"proposal_text\": \"Teks proposal profesional berdasarkan pedoman branding jika suitable, atau null jika tidak\" }"
                 )
 
                 logging.info(f"Requesting Advanced Autonomous Evaluation (NLP -> Mental Sim -> Tools) for {platform['name']} prospect...")
@@ -113,6 +115,9 @@ class FreelanceWorkflow:
                     evaluation_data = json.loads(evaluation_json)
                     if evaluation_data.get("is_suitable"):
                         logging.info(f"Job deemed suitable. Reason: {evaluation_data.get('reason')}")
+
+                        job_summary = evaluation_data.get('job_summary', 'Automate the task requested in the project description.')
+                        accepted_jobs.append(f"[{platform['name']}] {job_summary}")
 
                         # Actual Playwright interactions for proposal submission
                         self.browser.random_delay()
@@ -176,12 +181,19 @@ class FreelanceWorkflow:
              logging.error(f"Error during freelance platform interaction: {e}")
              self.browser.quit()
              self.db.update_task_state("freelance_platforms", "FAILED", str(e))
-             return False
+             return None
 
         self.db.update_task_state("freelance_platforms", "COMPLETED")
-        return True
 
-    def manage_github_and_jules(self, client_id="pelanggan_01"):
+        # In a sandbox environment without active logged-in accounts, accepted_jobs might be empty.
+        # For testing the AGI loop, we return a fallback string if nothing was accepted.
+        if not accepted_jobs:
+            return "Build a Python web scraper to extract product prices from e-commerce sites and save to CSV."
+
+        # Return the most recently accepted job's summary
+        return accepted_jobs[-1]
+
+    def manage_github_and_jules(self, client_id="pelanggan_01", job_context=None, feedback_error=None, previous_code=None):
         """Creates a GitHub repo and interacts with Jules for coding tasks."""
         logging.info(f"Starting GitHub and Jules interaction for client {client_id}...")
         self.db.update_task_state("github_jules", "IN_PROGRESS")
@@ -229,12 +241,27 @@ class FreelanceWorkflow:
                 self.browser.restart_in_headed_mode_for_login("Jules/Google")
                 return None # Early exit as we can't scrape without login
 
-            jules_prompt = (
-                f"Tugas: Buatkan kode untuk client {client_id}. "
-                "Peringatan: Akan ada update pada kode yang bisa jadi merubah "
-                "atau menambahkan banyak hal dari rencana awal ini."
-            )
-            logging.info(f"Sending prompt to Jules: {jules_prompt}")
+            # Build AGI-level dynamic prompt based on job context and potential iterative errors
+            if feedback_error and previous_code:
+                jules_prompt = (
+                    f"PENTING: Kode sebelumnya untuk klien {client_id} gagal dijalankan di sandbox environment. "
+                    f"Berikut adalah pesan error (stderr) yang didapat:\n\n{feedback_error}\n\n"
+                    f"Dan ini adalah kode sebelumnya yang gagal:\n\n{previous_code}\n\n"
+                    f"Tugas Anda: Perbaiki kode tersebut agar error ini hilang dan sistem bisa berjalan dengan sempurna sesuai permintaan awal. "
+                    f"Tuliskan seluruh kode yang sudah diperbaiki secara lengkap tanpa singkatan."
+                )
+                logging.info(f"Sending SELF-CORRECTION prompt to Jules for {client_id}")
+            else:
+                context_str = job_context if job_context else "Buatkan skrip backend automation Python."
+                jules_prompt = (
+                    f"Tugas: Buatkan kode solusi untuk client {client_id} berdasarkan deskripsi proyek berikut:\n\n"
+                    f"'{context_str}'\n\n"
+                    "Syarat AGI Praktis: Tuliskan kode yang 100% lengkap, bisa dijalankan langsung (production-ready). "
+                    "Jangan gunakan singkatan seperti '// isi logika disini'. "
+                    "Pastikan kode memiliki error handling (try-except) yang baik. "
+                    "Jika butuh dependensi/library pihak ketiga, beri komentar di bagian paling atas kode (misal: # DEPENDENCIES: requests, pandas, dll)."
+                )
+                logging.info(f"Sending INITIAL GENERATION prompt to Jules for {client_id} based on job context.")
 
             # Fill Jules prompt box (using generic selectors as the exact UI is unverified)
             prompt_filled = self.browser.fill('textarea, [contenteditable="true"]', jules_prompt)
