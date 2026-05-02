@@ -85,6 +85,11 @@ class BrowserAgent:
         """Temporarily restarts the browser in UI mode to allow the user to clear a login/CAPTCHA wall, then reverts."""
         logging.warning(f"Login/CAPTCHA wall detected for {platform_name}. Switching to Headed UI mode for manual intervention...")
 
+        # Send Telegram push notification so user knows to look at the screen
+        from telegram_notifier import TelegramNotifier
+        notifier = TelegramNotifier()
+        notifier.send_message(f"⚠️ *Intervensi Manual Diperlukan!*\n\nSistem tertahan oleh Login/CAPTCHA di *{platform_name}*.\n\nSaya telah memunculkan layar browser di komputer Anda. Mohon segera diselesaikan, lalu tekan ENTER di terminal agar saya bisa lanjut bekerja.")
+
         # Save current state if possible, though it's likely unauthenticated
         self.save_state()
 

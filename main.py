@@ -12,6 +12,7 @@ from freelance_workflow import FreelanceWorkflow
 from sandbox_tester import SandboxTester
 from resource_monitor import ResourceMonitor
 from financial_module import FinancialModule
+from telegram_notifier import TelegramNotifier
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +34,7 @@ def run_agent_cycle():
     try:
         # Instantiate workflows
         freelance_wf = FreelanceWorkflow(browser, llm, db, finance)
+        notifier = TelegramNotifier()
 
         # 1. Freelance Platform Checks (Messenger Role) & API Keys
         freelance_wf.load_api_keys()
@@ -44,8 +46,9 @@ def run_agent_cycle():
         client_id = "pelanggan_01"
         logging.info(f"Executing GitHub and Jules workflow for {client_id} based on acquired job context...")
 
-        # 3. Infinite Iterative Self-Correction Loop (True Autonomy)
+        # 3. Iterative Self-Correction Loop with Anti-Stuck Failsafe
         attempt = 0
+        max_failsafe_limit = 7 # Ultimate abort limit to prevent literal infinite loop crashes
         success = False
         feedback_error = None
         previous_code = None
@@ -54,6 +57,12 @@ def run_agent_cycle():
         while not success:
             attempt += 1
             logging.info(f"--- Code Generation Attempt {attempt} ---")
+
+            # Anti-Stuck Failsafe
+            if attempt > max_failsafe_limit:
+                logging.error(f"FAILSAFE TRIGGERED: Task for {client_id} failed {max_failsafe_limit} times despite web research. Aborting to prevent infinite loop.")
+                notifier.send_message(f"❌ *Tugas Dibatalkan (Failsafe)*\n\nTugas untuk klien {client_id} dibatalkan karena gagal diatasi setelah {max_failsafe_limit} kali percobaan mandiri.\n\nSaya akan pindah mencari pekerjaan lain agar sistem tidak stuck.")
+                break
 
             # If we've failed 3 times, trigger autonomous web research to help Jules
             if attempt > 3 and feedback_error:
@@ -78,6 +87,7 @@ def run_agent_cycle():
                      success = True
                      finance.record_transaction("GitHub/Jules", "Task Completed", 50.0, f"Successful autonomous task delivery for {client_id}")
                      logging.info(f"Code for {client_id} executed perfectly on attempt {attempt}.")
+                     notifier.send_message(f"✅ *Pekerjaan Selesai!*\n\nKode untuk klien {client_id} berhasil dijalankan dengan sempurna di dalam Sandbox pada percobaan ke-{attempt}.")
                  else:
                      logging.error(f"Sandbox execution failed on attempt {attempt}. Capturing errors for AGI Self-Correction...")
                      feedback_error = error_logs
