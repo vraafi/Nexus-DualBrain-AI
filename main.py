@@ -42,6 +42,11 @@ def run_agent_cycle():
         logging.info("Executing Freelance Platform interactions...")
         accepted_job_context = freelance_wf.handle_freelance_platforms()
 
+        # Extract platform name from the job context if available, fallback to a default
+        platform_name = "Upwork"
+        if accepted_job_context and "[" in accepted_job_context and "]" in accepted_job_context:
+            platform_name = accepted_job_context.split("[")[1].split("]")[0]
+
         # 2. Client Coding Task via GitHub and Jules (AGI Connected Workflow)
         client_id = "pelanggan_01"
         logging.info(f"Executing GitHub and Jules workflow for {client_id} based on acquired job context...")
@@ -61,7 +66,10 @@ def run_agent_cycle():
             # Anti-Stuck Failsafe
             if attempt > max_failsafe_limit:
                 logging.error(f"FAILSAFE TRIGGERED: Task for {client_id} failed {max_failsafe_limit} times despite web research. Aborting to prevent infinite loop.")
-                notifier.send_message(f"❌ *Tugas Dibatalkan (Failsafe)*\n\nTugas untuk klien {client_id} dibatalkan karena gagal diatasi setelah {max_failsafe_limit} kali percobaan mandiri.\n\nSaya akan pindah mencari pekerjaan lain agar sistem tidak stuck.")
+                notifier.send_message(f"❌ *Tugas Dibatalkan (Failsafe)*\n\nTugas untuk klien {client_id} dibatalkan karena gagal diatasi setelah {max_failsafe_limit} kali percobaan mandiri.\n\nMemulai proses Graceful Cancellation ke klien...")
+
+                # Execute Graceful Cancellation
+                freelance_wf.cancel_and_notify_client(client_id, platform_name)
                 break
 
             # If we've failed 3 times, trigger autonomous web research to help Jules

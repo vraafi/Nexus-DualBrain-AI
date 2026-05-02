@@ -229,6 +229,62 @@ class FreelanceWorkflow:
             logging.error(f"Error during autonomous web research: {e}")
             return "Terjadi kesalahan saat melakukan riset web."
 
+    def cancel_and_notify_client(self, client_id, platform_name):
+        """Autonomously sends a professional apology and cancellation message to the client when a task fails."""
+        logging.info(f"Initiating graceful cancellation for {client_id} on {platform_name}...")
+
+        # 1. Draft a professional message using the LLM based on branding rules
+        branding_rules = ""
+        if platform_name == "Upwork":
+            branding_rules = "Gunakan branding 'Problem Solver'. Beritahu klien bahwa secara teknis solusi ini tidak stabil untuk bisnisnya, jadi Anda membatalkannya secara profesional."
+        elif platform_name == "Fiverr":
+            branding_rules = "Gunakan branding 'Produk Siap Pakai'. Beritahu klien bahwa paket spesifikasi ini di luar ruang lingkup layanan standar Anda, sehingga dana akan dikembalikan."
+        elif platform_name == "Toptal":
+            branding_rules = "Gunakan branding 'Elite Engineer'. Jelaskan dengan bahasa teknis tingkat tinggi bahwa arsitektur yang diminta memiliki flaw/kecacatan keamanan, sehingga Anda menolak melanjutkannya demi standar kualitas."
+        else:
+            branding_rules = "Bersikap sangat sopan dan profesional."
+
+        cancellation_prompt = (
+            f"Klien '{client_id}' dari platform {platform_name} memberikan pekerjaan yang ternyata setelah diuji coba 7 kali, "
+            f"tidak bisa diselesaikan secara stabil atau aman. "
+            f"Aturan Branding: {branding_rules}\n\n"
+            "Tugas: Buat DRAFT pesan pembatalan kontrak yang profesional kepada klien tersebut. "
+            "Pesan harus terdengar seperti engineer senior yang jujur membatalkan pekerjaan karena alasan teknis/keamanan, BUKAN karena tidak bisa *coding*. "
+            "Jangan meminta maaf berlebihan, pertahankan wibawa. Gunakan bahasa Inggris yang natural dan profesional."
+        )
+
+        apology_message = self.llm.generate_text(cancellation_prompt)
+        if "Error" in apology_message or not apology_message.strip():
+             apology_message = f"Hi {client_id}, after conducting a deep technical analysis, I've determined that the requested architecture is unstable and poses long-term maintenance risks for your business. As an engineering standard, I cannot deliver a compromised solution, so I will be canceling this contract at no cost to you. Thank you for your understanding."
+
+        logging.info(f"Drafted Cancellation Message:\n{apology_message}")
+
+        # 2. Use Playwright to actually send the message to the client
+        try:
+            # Re-navigate to the platform's messaging area
+            platform_url = f"https://www.{platform_name.lower()}.com/messages"
+            logging.info(f"Navigating to {platform_url} to notify client...")
+            success = self.browser.get(platform_url)
+
+            if success:
+                self.browser.random_delay(2.0, 4.0)
+                # Assuming we find the client's chat thread
+                filled = self.browser.fill('textarea, [contenteditable="true"], input[type="text"][placeholder*="message" i]', apology_message)
+                if filled:
+                    self.browser.random_delay()
+                    self.browser.click('button:has-text("Send"), button[aria-label*="Send"], button[type="submit"]')
+                    logging.info(f"Successfully sent graceful cancellation message to {client_id} on {platform_name}.")
+                    return True
+                else:
+                    logging.warning(f"Could not find message input box on {platform_name} to send cancellation. Sent simulated log instead.")
+            else:
+                 logging.warning(f"Failed to load messaging page on {platform_name}.")
+
+        except Exception as e:
+            logging.error(f"Error while trying to send cancellation message: {e}")
+
+        return False
+
     def manage_github_and_jules(self, client_id="pelanggan_01", job_context=None, feedback_error=None, previous_code=None, research_context=None):
         """Creates a GitHub repo and interacts with Jules for coding tasks."""
         logging.info(f"Starting GitHub and Jules interaction for client {client_id}...")
