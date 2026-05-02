@@ -193,7 +193,43 @@ class FreelanceWorkflow:
         # Return the most recently accepted job's summary
         return accepted_jobs[-1]
 
-    def manage_github_and_jules(self, client_id="pelanggan_01", job_context=None, feedback_error=None, previous_code=None):
+    def research_error_with_duckduckgo(self, error_message):
+        """Autonomously uses DuckDuckGo to research a persistent error message."""
+        logging.info("Initiating autonomous web research for persistent error...")
+        try:
+            # We use DuckDuckGo HTML version for extreme lightweight, JS-free scraping
+            search_query = f"{error_message.splitlines()[-1]} site:stackoverflow.com OR site:github.com"
+            import urllib.parse
+            encoded_query = urllib.parse.quote_plus(search_query)
+            search_url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+
+            success = self.browser.get(search_url)
+            if not success:
+                 return "Gagal mengakses mesin pencari."
+
+            self.browser.random_delay()
+
+            # Scrape the snippet results
+            snippets = self.browser.page.query_selector_all('a.result__snippet')
+            research_text = "Hasil riset Web:\n"
+            found = False
+            for snippet in snippets[:3]: # Grab top 3 results
+                text = snippet.inner_text()
+                if text:
+                    research_text += f"- {text}\n"
+                    found = True
+
+            if found:
+                logging.info("Successfully gathered research context from the web.")
+                return research_text
+            else:
+                return "Tidak ditemukan solusi spesifik di web."
+
+        except Exception as e:
+            logging.error(f"Error during autonomous web research: {e}")
+            return "Terjadi kesalahan saat melakukan riset web."
+
+    def manage_github_and_jules(self, client_id="pelanggan_01", job_context=None, feedback_error=None, previous_code=None, research_context=None):
         """Creates a GitHub repo and interacts with Jules for coding tasks."""
         logging.info(f"Starting GitHub and Jules interaction for client {client_id}...")
         self.db.update_task_state("github_jules", "IN_PROGRESS")
@@ -243,11 +279,15 @@ class FreelanceWorkflow:
 
             # Build AGI-level dynamic prompt based on job context and potential iterative errors
             if feedback_error and previous_code:
+                research_addon = f"\n\nBerdasarkan riset web independen yang saya lakukan, perhatikan informasi ini untuk memperbaiki error: {research_context}\n\n" if research_context else ""
+
                 jules_prompt = (
                     f"PENTING: Kode sebelumnya untuk klien {client_id} gagal dijalankan di sandbox environment. "
                     f"Berikut adalah pesan error (stderr) yang didapat:\n\n{feedback_error}\n\n"
-                    f"Dan ini adalah kode sebelumnya yang gagal:\n\n{previous_code}\n\n"
+                    f"Dan ini adalah kode sebelumnya yang gagal:\n\n{previous_code}\n"
+                    f"{research_addon}"
                     f"Tugas Anda: Perbaiki kode tersebut agar error ini hilang dan sistem bisa berjalan dengan sempurna sesuai permintaan awal. "
+                    f"Gunakan <|think|> token untuk menganalisis error mendalam secara logis sebelum menulis kode."
                     f"Tuliskan seluruh kode yang sudah diperbaiki secara lengkap tanpa singkatan."
                 )
                 logging.info(f"Sending SELF-CORRECTION prompt to Jules for {client_id}")

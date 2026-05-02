@@ -44,28 +44,34 @@ def run_agent_cycle():
         client_id = "pelanggan_01"
         logging.info(f"Executing GitHub and Jules workflow for {client_id} based on acquired job context...")
 
-        # 3. Iterative Self-Correction Loop (Max 3 attempts)
-        max_attempts = 3
+        # 3. Infinite Iterative Self-Correction Loop (True Autonomy)
         attempt = 0
         success = False
         feedback_error = None
         previous_code = None
+        research_context = None
 
-        while attempt < max_attempts and not success:
+        while not success:
             attempt += 1
-            logging.info(f"--- Code Generation Attempt {attempt}/{max_attempts} ---")
+            logging.info(f"--- Code Generation Attempt {attempt} ---")
+
+            # If we've failed 3 times, trigger autonomous web research to help Jules
+            if attempt > 3 and feedback_error:
+                logging.info(f"Attempt {attempt}: Agent is struggling. Triggering Autonomous Web Research for the error...")
+                research_context = freelance_wf.research_error_with_duckduckgo(feedback_error)
 
             generated_code = freelance_wf.manage_github_and_jules(
                 client_id,
                 job_context=accepted_job_context,
                 feedback_error=feedback_error,
-                previous_code=previous_code
+                previous_code=previous_code,
+                research_context=research_context
             )
 
             if generated_code:
                  logging.info(f"Running sandbox tests for {client_id}...")
                  sandbox_tester = SandboxTester(db)
-                 # test_and_monitor_code now needs to return a tuple (success: bool, error_logs: str) to feed back
+                 # test_and_monitor_code returns a tuple (success: bool, error_logs: str) to feed back
                  test_passed, error_logs = sandbox_tester.test_and_monitor_code(client_id, generated_code, duration_minutes=15)
 
                  if test_passed:
@@ -79,9 +85,6 @@ def run_agent_cycle():
             else:
                  logging.error("Failed to generate code from Jules. Aborting loop.")
                  break
-
-        if not success:
-            logging.error(f"Failed to generate working code after {max_attempts} attempts.")
 
     except Exception as e:
         logging.error(f"Error isolated in Freelance workflow cycle: {e}")
