@@ -221,7 +221,7 @@ class TikTokVeoWorkflow:
 
             # Check for Google login wall
             if "Sign in" in self.browser.get_text("body", timeout=3000) or self.browser.get_text('input[type="email"]', timeout=2000):
-                self.browser.pause_for_manual_login("Gemini")
+                self.browser.restart_in_headed_mode_for_login("Gemini")
                 logging.error("Cannot proceed with Nano Banana processing without login. Task failed.")
                 return False
 
@@ -312,7 +312,7 @@ class TikTokVeoWorkflow:
 
             # Check for login wall
             if "Sign in" in self.browser.get_text("body", timeout=3000) or self.browser.get_text('input[type="email"]', timeout=2000):
-                self.browser.pause_for_manual_login("Veo 3 (Google)")
+                self.browser.restart_in_headed_mode_for_login("Veo 3 (Google)")
                 logging.error("Cannot proceed with Veo 3 generation without login. Task failed.")
                 return False
 
@@ -326,49 +326,58 @@ class TikTokVeoWorkflow:
                     logging.info(f"Generating video {idx+1}/3 for {product['product_name']} with prompt: '{prompt}'")
 
                     # Actual UI interaction: fill prompt
-                    prompt_filled = self.browser.fill('textarea, [contenteditable="true"], input[placeholder*="Describe" i]', prompt)
-                    if not prompt_filled:
-                        logging.warning(f"Could not find prompt input box on Veo for {product['product_name']}.")
-                        continue
+                    # Enhance resilience by utilizing role-based and text-based locators instead of rigid CSS
+                    try:
+                        self.browser.page.get_by_role("textbox").first.fill(prompt, timeout=10000)
+                    except Exception:
+                        prompt_filled = self.browser.fill('textarea, [contenteditable="true"], input[placeholder*="Describe" i]', prompt)
+                        if not prompt_filled:
+                            logging.warning(f"Could not find prompt input box on Veo for {product['product_name']}.")
+                            continue
 
                     self.browser.random_delay()
 
                     # Actual UI interaction: select 9:16 aspect ratio
-                    # Note: exact selectors depend on live DOM, using general text matches
-                    ratio_clicked = self.browser.click('button:has-text("9:16"), div:has-text("9:16")')
-                    if not ratio_clicked:
-                        logging.info("Could not find 9:16 button. Proceeding with default ratio.")
+                    try:
+                        self.browser.page.get_by_text("9:16", exact=False).first.click(timeout=5000)
+                    except Exception:
+                        ratio_clicked = self.browser.click('button:has-text("9:16"), div:has-text("9:16")')
+                        if not ratio_clicked:
+                            logging.info("Could not find 9:16 button. Proceeding with default ratio.")
 
                     self.browser.random_delay()
 
                     # Actual UI interaction: Generate
-                    generate_clicked = self.browser.click('button:has-text("Generate"), button:has-text("Create"), button[type="submit"]')
-                    if not generate_clicked:
-                         logging.error("Failed to click Generate button on Veo.")
-                         continue
+                    try:
+                         # Veo 3 generation can be a primary action button
+                         self.browser.page.get_by_role("button", name="Generate").click(timeout=5000)
+                    except Exception:
+                         generate_clicked = self.browser.click('button:has-text("Generate"), button:has-text("Create"), button[type="submit"]')
+                         if not generate_clicked:
+                              logging.error("Failed to click Generate button on Veo.")
+                              continue
 
                     logging.info("Waiting for Veo 3 generation to complete (this may take a while)...")
-                    # In a real environment, wait for a specific element indicating completion.
-                    # We sleep here as generation takes time, then simulate the save to pass the loop
-                    # if the UI scraping fails to grab the actual video stream due to sandbox blocks.
-                    time.sleep(15)
 
                     video_filename = f"veo_{product['product_name'].replace(' ', '_')}_vid_{idx+1}.mp4"
                     veo_path = os.path.join(output_dir, video_filename)
 
-                    # Attempt actual download via Playwright
+                    # Attempt actual download via Playwright with extended polling timeout (5 minutes for generation)
                     try:
-                        with self.browser.page.expect_download(timeout=120000) as download_info:
-                            download_clicked = self.browser.click('button:has-text("Download"), a[download], a:has-text("Download")')
-                            if not download_clicked:
-                                logging.error("Failed to click the download link on Veo 3.")
-                                continue
+                        with self.browser.page.expect_download(timeout=300000) as download_info:
+                            try:
+                                self.browser.page.get_by_role("button", name="Download").click(timeout=300000)
+                            except Exception:
+                                download_clicked = self.browser.click('button:has-text("Download"), a[download], a:has-text("Download")')
+                                if not download_clicked:
+                                    logging.error("Failed to click the download link on Veo 3.")
+                                    continue
 
                         download = download_info.value
                         download.save_as(veo_path)
                         logging.info(f"Actual Veo video downloaded to {veo_path}")
                     except Exception as dl_e:
-                        logging.error(f"Playwright Veo 3 download expectation failed: {dl_e}")
+                        logging.error(f"Playwright Veo 3 download expectation failed or timed out: {dl_e}")
                         continue
 
                     # Reflection Loop: Verify actual generated video size > 10KB

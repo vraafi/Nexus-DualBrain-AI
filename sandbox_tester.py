@@ -11,12 +11,27 @@ class SandboxTester:
         self.sandbox_dir = os.path.join(os.getcwd(), "client_sandbox")
 
     def setup_sandbox(self):
-        """Creates a clean directory for testing generated code."""
-        logging.info("Setting up client sandbox...")
+        """Creates a clean directory for testing generated code on the SSD."""
+        logging.info("Setting up client sandbox on SSD...")
         if os.path.exists(self.sandbox_dir):
             shutil.rmtree(self.sandbox_dir)
         os.makedirs(self.sandbox_dir, exist_ok=True)
         logging.info(f"Sandbox created at {self.sandbox_dir}")
+
+    def cleanup_sandbox(self):
+        """Aggressively prunes dangling docker containers and networks to save SSD space."""
+        logging.info("Executing aggressive Docker cache cleanup to protect 256GB SSD...")
+        try:
+            # Remove stopped containers and dangling images
+            subprocess.run(["docker", "system", "prune", "-f"], capture_output=True, timeout=30)
+            logging.info("Docker system pruned successfully.")
+
+            # Remove local sandbox directory
+            if os.path.exists(self.sandbox_dir):
+                shutil.rmtree(self.sandbox_dir)
+                logging.info("Local sandbox directory removed.")
+        except Exception as e:
+            logging.error(f"Error during sandbox cleanup: {e}")
 
     def test_and_monitor_code(self, client_id, code_string, duration_minutes=15):
         """Runs the generated code in a subprocess within the sandbox for a specified duration."""
@@ -113,6 +128,9 @@ class SandboxTester:
                  subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
             except:
                  pass
+
+        # Execute aggressive disk cleanup
+        self.cleanup_sandbox()
 
         if test_passed:
             logging.info(f"Sandbox testing for {client_id} completed successfully.")

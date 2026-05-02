@@ -23,8 +23,11 @@ class BrowserAgent:
         """Simulates human-like delay."""
         time.sleep(random.uniform(min_sec, max_sec))
 
-    def _init_driver(self):
-        """Initializes a persistent Playwright browser context with low-memory and stealth optimizations."""
+    def _init_driver(self, force_headed=False):
+        """Initializes the Playwright persistent browser context in stealth mode.
+        By default, runs headless=True for extreme RAM efficiency.
+        If force_headed=True, opens a UI window for manual KYC/login.
+        """
         try:
             self.playwright = sync_playwright().start()
 
@@ -46,9 +49,10 @@ class BrowserAgent:
             state_file = os.path.join(os.getcwd(), "browser_state.json")
             storage_state = state_file if os.path.exists(state_file) else None
 
-            # Use standard context for lighter memory footprint instead of heavy persistent context
-            # Explicitly run headless=False so the user can interact visually when prompted for manual login
-            self.browser = self.playwright.chromium.launch(headless=False, args=args)
+            # Hardware Constraint (8GB RAM): Run headless=True by default for 24/7 background operation.
+            # Only use headless=False if explicitly requested for manual login.
+            is_headless = not force_headed
+            self.browser = self.playwright.chromium.launch(headless=is_headless, args=args)
             self.context = self.browser.new_context(
                 user_agent=selected_ua,
                 storage_state=storage_state
@@ -61,11 +65,51 @@ class BrowserAgent:
             # Track state file to save upon exit
             self.state_file = state_file
 
-            logging.info("Playwright headless stealth browser context initialized with storage_state for autonomy.")
+            mode_str = "Headed (UI)" if force_headed else "Headless"
+            logging.info(f"Playwright stealth browser context initialized in {mode_str} mode with storage_state for autonomy.")
         except Exception as e:
             logging.error(f"Failed to initialize persistent Playwright browser: {e}")
             self.quit()
             raise
+
+    def restart_in_headed_mode_for_login(self, platform_name):
+        """Temporarily restarts the browser in UI mode to allow the user to clear a login/CAPTCHA wall, then reverts."""
+        logging.warning(f"Login/CAPTCHA wall detected for {platform_name}. Switching to Headed UI mode for manual intervention...")
+
+        # Save current state if possible, though it's likely unauthenticated
+        self.save_state()
+
+        # Gracefully shutdown current headless instance
+        if self.browser:
+            self.browser.close()
+        if self.playwright:
+            self.playwright.stop()
+
+        import gc
+        gc.collect() # Force RAM clearance
+
+        # Restart in headed mode
+        self._init_driver(force_headed=True)
+
+        logging.info("Browser is now running in UI mode. Please complete the login/CAPTCHA.")
+
+        # We reuse the pause_for_manual_login logic here now that the UI is visible
+        self.pause_for_manual_login(platform_name)
+
+        logging.info("Manual intervention completed. Reverting back to RAM-efficient headless mode...")
+        self.save_state()
+
+        # Shutdown headed instance
+        if self.browser:
+            self.browser.close()
+        if self.playwright:
+            self.playwright.stop()
+
+        gc.collect()
+
+        # Restart in default headless mode to continue autonomous tasks
+        self._init_driver(force_headed=False)
+        return True
 
     def get(self, url):
         """Navigates to a URL with strict error handling and memory management."""

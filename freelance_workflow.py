@@ -65,6 +65,20 @@ class FreelanceWorkflow:
                      # Truncate to save tokens
                      page_text = page_text[:2000]
 
+                # 2. Deterministic Pre-Filtering to Prevent LLM Hallucination/Overconfidence
+                # Hardcoded physical or out-of-scope tasks the agent CANNOT do.
+                negative_keywords = ["zoom", "meeting", "call", "hardware", "ios", "c#", "physical", "office", "design", "figma"]
+
+                is_statically_rejected = False
+                for keyword in negative_keywords:
+                    if keyword in page_text.lower():
+                        logging.warning(f"Deterministic Filter triggered: Found negative keyword '{keyword}' on {platform['name']}. Rejecting task before LLM evaluation to save API costs and prevent hallucination.")
+                        is_statically_rejected = True
+                        break
+
+                if is_statically_rejected:
+                    continue # Skip to next platform
+
                 # Personal Branding Instructions per platform
                 branding_rules = ""
                 if platform['name'] == "Upwork":
@@ -74,7 +88,7 @@ class FreelanceWorkflow:
                 elif platform['name'] == "Toptal":
                     branding_rules = "Gunakan branding sebagai 'Elite & Senior Engineer' (Top 3%). Jelaskan teknologi dari segi efisiensi bisnis, arsitektur yang scalable, dan prinsip SOLID/Clean Code."
 
-                # 2. Advanced Autonomous Job Filtering Loop
+                # 3. Advanced Autonomous Job Filtering Loop
                 dynamic_prompt = (
                     f"Lakukan evaluasi otonomi tingkat lanjut untuk halaman pekerjaan ini: '{page_text}'.\n"
                     f"Platform: {platform['name']}. Aturan Branding Wajib: {branding_rules}\n"
@@ -130,7 +144,7 @@ class FreelanceWorkflow:
                      # Additional check: If we can see a password field, we're definitely logged out
                      password_field = self.browser.get_text('input[type="password"]', timeout=2000)
                      if password_field is not None:
-                         self.browser.pause_for_manual_login(platform['name'])
+                         self.browser.restart_in_headed_mode_for_login(platform['name'])
                          continue # Abort processing for this platform since we aren't logged in
 
                 # Check for KYC / Verification Walls
@@ -212,7 +226,7 @@ class FreelanceWorkflow:
 
             # Check for Google login wall on Jules
             if "Sign in" in self.browser.get_text("body", timeout=3000) or self.browser.get_text('input[type="email"]', timeout=2000):
-                self.browser.pause_for_manual_login("Jules/Google")
+                self.browser.restart_in_headed_mode_for_login("Jules/Google")
                 return None # Early exit as we can't scrape without login
 
             jules_prompt = (
