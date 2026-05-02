@@ -130,10 +130,7 @@ def main():
         # Hardware cooldown after a full cycle load
         rest_seconds = 7200 # Standard 2 hours cooldown
         logging.info(f"Hardware cooling phase. Sleeping for {rest_seconds} seconds...")
-        # Reduced sleep purely for the sandbox testing phase of this refactor
-        simulation_sleep = 5
-        logging.info(f"SIMULATION: Sleeping {simulation_sleep}s instead of {rest_seconds}s for sandbox dev test.")
-        time.sleep(simulation_sleep)
+        time.sleep(rest_seconds)
 
 if __name__ == "__main__":
     main()

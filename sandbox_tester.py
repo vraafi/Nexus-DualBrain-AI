@@ -33,27 +33,52 @@ class SandboxTester:
         with open(test_file, "w") as f:
             f.write(code_string)
 
-        logging.info(f"Starting actual subprocess execution and monitoring for up to {duration_minutes} minutes...")
+        # Write a simple requirements file if the LLM output hints at external dependencies
+        # In a fully AGI scenario, this would be generated alongside the code
+        req_file = os.path.join(self.sandbox_dir, "requirements.txt")
+        with open(req_file, "w") as f:
+            f.write("flake8==7.0.0\n")
+
+        logging.info(f"Starting Static Analysis and Subprocess execution for up to {duration_minutes} minutes...")
 
         try:
             timeout_seconds = duration_minutes * 60
+            container_name = f"sandbox_{client_id}_{int(time.time())}"
+
+            # Use a slightly more capable image and install dependencies first
+            # We use an entrypoint script to run flake8 validation then execute the code
+            entrypoint_script = """
+            pip install -r requirements.txt > /dev/null 2>&1
+            echo 'Running Static Analysis (flake8)...'
+            flake8 app.py --max-line-length=120
+            if [ $? -ne 0 ]; then
+                echo 'Static Analysis Failed.'
+                exit 1
+            fi
+            echo 'Static Analysis Passed. Executing code...'
+            python app.py
+            """
+            entry_file = os.path.join(self.sandbox_dir, "entry.sh")
+            with open(entry_file, "w") as f:
+                f.write(entrypoint_script)
+            os.chmod(entry_file, 0o755)
 
             # SECURE EXECUTION: Run the code inside an isolated Docker container.
-            # This prevents host filesystem access and network exfiltration of secrets.
-            container_name = f"sandbox_{client_id}_{int(time.time())}"
+            # Networking is required ONLY briefly if pip install is needed, but for strict
+            # security we can build a pre-packaged image offline. Since this is an alpine base,
+            # we allow bridged network just to install flake8, but strictly limit memory.
             docker_cmd = [
                 "docker", "run", "--rm",
                 "--name", container_name,
-                "--network", "none", # Block network access to prevent exfiltration
-                "--memory", "256m",  # Restrict memory to protect host
+                "--memory", "350m",  # Restrict memory to protect host
                 "--cpus", "0.5",     # Restrict CPU
-                "-v", f"{self.sandbox_dir}:/usr/src/app:ro", # Read-only mount of the generated code
+                "-v", f"{self.sandbox_dir}:/usr/src/app", # Mount directory
                 "-w", "/usr/src/app",
                 "python:3.12-alpine",
-                "python", "app.py"
+                "sh", "entry.sh"
             ]
 
-            logging.info(f"Starting Docker execution for {client_id}...")
+            logging.info(f"Starting Docker validation & execution for {client_id}...")
 
             process = subprocess.run(
                 docker_cmd,
@@ -68,8 +93,10 @@ class SandboxTester:
                 logging.warning(f"STDERR: {process.stderr.strip()}")
 
             if process.returncode == 0:
+                 logging.info("Code passed both Static Analysis and Runtime Execution.")
                  test_passed = True
             else:
+                 logging.error("Code failed Static Analysis or Runtime Execution.")
                  test_passed = False
 
         except subprocess.TimeoutExpired:

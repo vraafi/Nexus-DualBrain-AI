@@ -4,7 +4,8 @@ import logging
 from cryptography.fernet import Fernet
 
 class IdentityManager:
-    def __init__(self, vault_path="storage/identity_vault.enc", key_path="storage/vault.key"):
+    # Hardware Constraint: Keep fast-access, small, sensitive Identity Vaults and DBs on the 256GB SSD.
+    def __init__(self, vault_path="ssd_storage/identity_vault.enc", key_path="ssd_storage/vault.key"):
         self.vault_path = vault_path
         self.key_path = key_path
         self.fernet = None

@@ -3,6 +3,7 @@ import time
 import os
 import requests
 import shutil
+import json
 
 class TikTokVeoWorkflow:
     def __init__(self, browser_agent, llm_client, database, finance_module):
@@ -55,7 +56,10 @@ class TikTokVeoWorkflow:
 
         logging.info(f"Successfully scraped {len(trend_urls)} real trend URLs from TikTok.")
 
-        download_dir = os.path.join(os.getcwd(), "downloads")
+        # Hardware Constraint: Route heavy media downloads to the 500GB HDD storage path
+        # In a real environment, "/mnt/hdd/downloads" would map to the physical HDD.
+        # We use a distinct "hdd_storage/downloads" folder to logically separate from SSD files.
+        download_dir = os.path.join(os.getcwd(), "hdd_storage", "downloads")
         os.makedirs(download_dir, exist_ok=True)
 
         for idx, url in enumerate(trend_urls[:5]): # Download 1-5 videos max
@@ -105,7 +109,40 @@ class TikTokVeoWorkflow:
                 # Reflection Loop Check
                 if os.path.exists(file_path) and os.path.getsize(file_path) > 10240:
                     logging.info(f"Video {idx+1} downloaded successfully and validated (>10KB).")
-                    self.videos_downloaded.append(file_path)
+
+                    # Extract the middle frame using OpenCV
+                    try:
+                        import cv2
+                        cap = cv2.VideoCapture(file_path)
+                        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        middle_frame = total_frames // 2
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, middle_frame)
+                        ret, frame = cap.read()
+
+                        if ret:
+                            image_path = os.path.join(download_dir, f"trend_image_{idx+1}.jpg")
+                            cv2.imwrite(image_path, frame)
+                            logging.info(f"Successfully extracted middle frame to {image_path}")
+                            self.videos_downloaded.append({
+                                "video_path": file_path,
+                                "image_path": image_path,
+                                "tiktok_link": url
+                            })
+                        else:
+                            logging.error(f"Failed to read frame {middle_frame} from video {file_path}")
+                            self.videos_downloaded.append({
+                                "video_path": file_path,
+                                "image_path": None,
+                                "tiktok_link": url
+                            })
+                        cap.release()
+                    except Exception as cv_e:
+                        logging.error(f"OpenCV frame extraction failed: {cv_e}")
+                        self.videos_downloaded.append({
+                            "video_path": file_path,
+                            "image_path": None,
+                            "tiktok_link": url
+                        })
                 else:
                     logging.error(f"Video {idx+1} failed reflection check (size <= 10KB or missing).")
 
@@ -122,13 +159,31 @@ class TikTokVeoWorkflow:
         self.db.update_task_state("gemini_interaction", "IN_PROGRESS")
 
         # 1. Goal-oriented Dynamic Prompt Generation
-        # Generating prompt asking for structured JSON output for downstream tasks
+        if not self.videos_downloaded:
+            logging.warning("No videos were downloaded, cannot process images.")
+            return False
+
+        # Prepare context about downloaded items so LLM doesn't hallucinate paths
+        download_context = []
+        for v in self.videos_downloaded:
+            if v.get("image_path"):
+                download_context.append({
+                    "tiktok_link": v["tiktok_link"],
+                    "local_image_path": v["image_path"]
+                })
+
+        if not download_context:
+             logging.error("No valid images extracted from the downloaded videos.")
+             return False
+
+        # Generating prompt asking for structured JSON output for downstream tasks, explicitly passing real paths
         dynamic_prompt = (
-            "Berdasarkan tren TikTok afiliasi saat ini (produk gaya hidup minimalis), "
-            "tujuan kita adalah membuat video afiliasi TikTok dengan konversi tinggi menggunakan Veo 3. "
-            "Keluarkan HANYA dalam format JSON dengan skema berikut: "
+            "Berdasarkan daftar video TikTok afiliasi berikut dan path gambar lokalnya: "
+            f"{json.dumps(download_context)} "
+            "Tujuan kita adalah membuat video afiliasi TikTok dengan konversi tinggi menggunakan Veo 3. "
+            "Keluarkan HANYA dalam format JSON dengan skema berikut. Pastikan 'local_image_path' sesuai dengan path yang saya berikan! "
             "{ \"products\": [ "
-            "{ \"product_name\": \"nama produk\", \"tiktok_link\": \"https://tiktok...\", \"prompts\": [\"prompt 1\", \"prompt 2\", \"prompt 3\"], \"local_image_path\": \"downloads/raw_product.jpg\" }"
+            "{ \"product_name\": \"nama produk\", \"tiktok_link\": \"https://tiktok...\", \"prompts\": [\"prompt 1 (camera shot 1)\", \"prompt 2 (camera shot 2)\", \"prompt 3 (camera shot 3)\"], \"local_image_path\": \"/path/to/extracted/image.jpg\" }"
             "] }"
         )
 
@@ -143,7 +198,6 @@ class TikTokVeoWorkflow:
         logging.info(f"Received prompts from Gemini: {llm_response[:100]}...")
 
         # Parse the structured JSON response
-        import json
         try:
              parsed_response = json.loads(llm_response)
              self.product_data = parsed_response.get("products", [])
@@ -168,8 +222,8 @@ class TikTokVeoWorkflow:
             # Check for Google login wall
             if "Sign in" in self.browser.get_text("body", timeout=3000) or self.browser.get_text('input[type="email"]', timeout=2000):
                 self.browser.pause_for_manual_login("Gemini")
-                self.browser.get(gemini_url) # Reload to apply state
-                self.browser.random_delay()
+                logging.error("Cannot proceed with Nano Banana processing without login. Task failed.")
+                return False
 
             for item in self.product_data:
                 raw_image_path = item.get("local_image_path")
@@ -239,7 +293,8 @@ class TikTokVeoWorkflow:
         logging.info("Starting Veo 3 video generation and Telegram dispatch...")
         self.db.update_task_state("veo_generation", "IN_PROGRESS")
 
-        output_dir = os.path.join(os.getcwd(), "veo_outputs")
+        # Hardware Constraint: Route heavy generated video outputs to the 500GB HDD storage path
+        output_dir = os.path.join(os.getcwd(), "hdd_storage", "veo_outputs")
         os.makedirs(output_dir, exist_ok=True)
         final_videos = []
 
@@ -258,8 +313,8 @@ class TikTokVeoWorkflow:
             # Check for login wall
             if "Sign in" in self.browser.get_text("body", timeout=3000) or self.browser.get_text('input[type="email"]', timeout=2000):
                 self.browser.pause_for_manual_login("Veo 3 (Google)")
-                self.browser.get(veo_url) # Reload
-                self.browser.random_delay()
+                logging.error("Cannot proceed with Veo 3 generation without login. Task failed.")
+                return False
 
             for product in self.product_data:
                 image_path = product.get("processed_image_path")
