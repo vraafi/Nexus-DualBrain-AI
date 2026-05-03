@@ -50,6 +50,23 @@ def load_state(task_id):
         }
     return None
 
+def get_last_incomplete_task():
+    """Finds the last task that was running but not completed, useful for recovery."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('SELECT task_id, status, current_step, data FROM task_state WHERE status = "RUNNING" ORDER BY id DESC LIMIT 1')
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        return {
+            "task_id": row[0],
+            "status": row[1],
+            "current_step": row[2],
+            "data": json.loads(row[3])
+        }
+    return None
+
 if __name__ == "__main__":
     init_db()
     print("Database ready.")

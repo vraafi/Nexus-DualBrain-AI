@@ -31,26 +31,39 @@ class GeminiWebAgent:
                      "Gambar ini adalah frame dari video affiliate tiktok. "
                      "Saya ingin membuat video seperti trend affiliate ini. "
                      "Sebutkan produknya dari gambar ini, dan berikan 3 prompt untuk Veo 3 yang memiliki kamera shot berbeda namun estetik. "
-                     "Berikan respons dalam format terstruktur."
+                     "Berikan respons DALAM FORMAT JSON SAJA (tanpa markdown lain) dengan struktur:\n"
+                     '{"product": "nama produk", "prompts": ["prompt 1", "prompt 2", "prompt 3"]}'
                  )
 
-                 page.fill("rich-textarea", prompt_text)
-                 page.keyboard.press("Enter")
+                 try:
+                     textarea = page.locator("rich-textarea, div[contenteditable='true']").first
+                     textarea.fill(prompt_text)
+                     page.keyboard.press("Enter")
+                 except Exception as e:
+                     logging.error(f"Failed to fill prompt: {e}")
+                     continue
 
                  logging.info("Prompt sent. Waiting for Gemini response...")
-                 time.sleep(15)
+                 page.wait_for_timeout(15000)
 
                  try:
-                     response_elements = page.locator("message-content").all()
+                     response_elements = page.locator("message-content, .model-response-text").all()
                      if response_elements:
                          latest_response = response_elements[-1].inner_text()
-                         prompts.append({
-                             "product": "Product identified by Gemini",
-                             "prompts": ["Cinematic close up...", "Wide angle shot...", "Macro texture shot..."],
-                             "link": data.get("url"),
-                             "image_path": data.get("image_path")
-                         })
-                         logging.info("Successfully retrieved prompts from Gemini.")
+                         import json
+                         import re
+                         match = re.search(r'\{.*\}', latest_response, re.DOTALL)
+                         if match:
+                             parsed = json.loads(match.group(0))
+                             prompts.append({
+                                 "product": parsed.get("product", "Unknown Product"),
+                                 "prompts": parsed.get("prompts", []),
+                                 "link": data.get("url"),
+                                 "image_path": data.get("image_path")
+                             })
+                             logging.info("Successfully retrieved and parsed prompts from Gemini.")
+                         else:
+                             logging.warning("No JSON found in Gemini response.")
                  except Exception as e:
                      logging.error(f"Failed to read Gemini response: {e}")
 
@@ -77,11 +90,63 @@ class GeminiWebAgent:
             except Exception as e:
                  logging.warning(f"Could not upload image for BG removal: {e}")
 
-            page.fill("rich-textarea", "remove beground dari foto yang saya kirimkan")
-            page.keyboard.press("Enter")
+            try:
+                textarea = page.locator("rich-textarea, div[contenteditable='true']").first
+                textarea.fill("remove beground dari foto yang saya kirimkan")
+                page.keyboard.press("Enter")
+            except Exception as e:
+                logging.error(f"Failed to send background removal prompt: {e}")
 
             logging.info("Waiting for background removal...")
-            time.sleep(15)
+            page.wait_for_timeout(15000)
+
+            try:
+                # Implement actual background removal download logic
+                logging.info("Attempting to locate and download processed image.")
+
+                # Wait for response image
+                img_elements = page.locator("message-content img").all()
+                if img_elements:
+                    latest_img = img_elements[-1]
+                    img_src = latest_img.get_attribute("src")
+
+                    if img_src and img_src.startswith("http"):
+                        # Download using Playwright's page context or requests if auth is not complex
+                        bg_removed_path = f"no_bg_{os.path.basename(image_path)}"
+                        # Simulate a click on download if there is a button, or fetch the src
+                        try:
+                            # Many times gemini has a download button on hover
+                            download_btn = page.locator("button[aria-label='Download']").last
+                            if download_btn.is_visible():
+                                with page.expect_download(timeout=30000) as download_info:
+                                    download_btn.click()
+                                download = download_info.value
+                                download.save_as(bg_removed_path)
+                                logging.info(f"Successfully downloaded background-removed image: {bg_removed_path}")
+                                return bg_removed_path
+                        except:
+                            pass
+
+                        # Fallback to fetching the image using Playwright's download context
+                        try:
+                            # Start listening for the download we are about to trigger
+                            with page.expect_download(timeout=30000) as download_info:
+                                page.evaluate(f"""
+                                    const link = document.createElement('a');
+                                    link.href = '{img_src}';
+                                    link.download = 'bg_removed.png';
+                                    document.body.appendChild(link);
+                                    link.click();
+                                    document.body.removeChild(link);
+                                """)
+                            download = download_info.value
+                            download.save_as(bg_removed_path)
+                            logging.info(f"Triggered JS download and saved background-removed image: {bg_removed_path}")
+                            return bg_removed_path
+                        except Exception as dl_err:
+                            logging.error(f"Fallback download failed: {dl_err}")
+            except Exception as e:
+                logging.warning(f"Failed to download background-removed image: {e}")
 
             return image_path
 
@@ -101,14 +166,19 @@ class GeminiWebAgent:
             except:
                 pass
 
-            page.fill("rich-textarea", prompt_text)
-            page.keyboard.press("Enter")
+            try:
+                textarea = page.locator("rich-textarea, div[contenteditable='true']").first
+                textarea.fill(prompt_text)
+                page.keyboard.press("Enter")
+            except Exception as e:
+                logging.error(f"Failed to send mentor prompt: {e}")
+                return "Error sending prompt."
 
             logging.info("Waiting for mentor response...")
-            time.sleep(15)
+            page.wait_for_timeout(15000)
 
             try:
-                response_elements = page.locator("message-content").all()
+                response_elements = page.locator("message-content, .model-response-text").all()
                 if response_elements:
                     latest_response = response_elements[-1].inner_text()
                     logging.info(f"Mentor advised: {latest_response[:100]}...")

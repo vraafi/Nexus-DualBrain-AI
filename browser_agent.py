@@ -14,21 +14,24 @@ class BrowserAgent:
     def _init_browser(self):
         try:
             self.playwright = sync_playwright().start()
-            # Hybrid Browser Mode: Can toggle headless=False for manual intervention
-            self.browser = self.playwright.chromium.launch(
+
+            # Implement Persistent Context for session management (Logins/Cookies)
+            user_data_dir = "./browser_profile"
+
+            self.context = self.playwright.chromium.launch_persistent_context(
+                user_data_dir=user_data_dir,
                 headless=self.headless,
                 args=[
                     "--disable-gpu",
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
                     "--single-process"
-                ]
+                ],
+                no_viewport=True
             )
-            # Ensure single tab logic
-            self.context = self.browser.new_context()
-            self.page = self.context.new_page()
-            self.page.set_default_timeout(30000)
-            logging.info(f"Playwright browser initialized (headless={self.headless}).")
+            self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
+            self.page.set_default_timeout(60000)
+            logging.info(f"Playwright browser initialized (headless={self.headless}, persistent_profile).")
         except Exception as e:
             logging.error(f"Failed to init browser: {e}")
             self.quit()
@@ -48,8 +51,6 @@ class BrowserAgent:
         try:
             if self.context:
                 self.context.close()
-            if self.browser:
-                self.browser.close()
             if self.playwright:
                 self.playwright.stop()
         except Exception as e:
@@ -59,10 +60,6 @@ class BrowserAgent:
             self.context = None
             self.browser = None
             self.playwright = None
-            # Strict explicit RAM clearing
-            del self.page
-            del self.context
-            del self.browser
             gc.collect()
             logging.info("Browser closed and memory explicitly cleared.")
 

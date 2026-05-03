@@ -86,3 +86,60 @@ class TikTokAgent:
              logging.error(f"Error in TikTokAgent download: {e}")
 
         return downloaded_data
+
+    def upload_videos(self, video_paths):
+        """Uploads generated Veo 3 affiliate videos back to TikTok using Playwright UI automation."""
+        logging.info("Uploading generated videos to TikTok...")
+        success_count = 0
+        try:
+            page = self.browser.page
+            self.browser.navigate("https://www.tiktok.com/upload")
+
+            # Allow time for potential login checks or page loading
+            page.wait_for_timeout(10000)
+
+            for video_path in video_paths:
+                try:
+                    logging.info(f"Attempting to upload {video_path}")
+
+                    # Wait for and set the file input
+                    # TikTok's upload iframe or main page file input usually accepts video/mp4
+                    file_input = page.locator("input[type='file'][accept*='video']").first
+                    if not file_input.is_visible():
+                        logging.warning("File input not immediately visible, trying to wait...")
+                        page.wait_for_selector("input[type='file'][accept*='video']", timeout=15000)
+
+                    file_input.set_input_files(video_path)
+
+                    # Wait for upload to complete
+                    page.wait_for_timeout(15000)
+
+                    # Add caption if possible (TikTok's editor UI changes frequently, so using a broad selector)
+                    try:
+                        caption_editor = page.locator("div[contenteditable='true']").first
+                        caption_editor.fill("Check out this amazing product! #affiliate #racun #fyp")
+                        page.wait_for_timeout(2000)
+                    except Exception as caption_err:
+                        logging.warning(f"Failed to set caption: {caption_err}")
+
+                    # Click Post
+                    post_button = page.locator("button:has-text('Post'), div[role='button']:has-text('Post')").first
+                    post_button.click()
+
+                    # Wait for success notification or reset
+                    page.wait_for_timeout(10000)
+                    success_count += 1
+                    logging.info(f"Successfully uploaded {video_path} to TikTok.")
+
+                    # Need to click upload another video or navigate back if doing multiple
+                    if video_path != video_paths[-1]:
+                        self.browser.navigate("https://www.tiktok.com/upload")
+                        page.wait_for_timeout(5000)
+
+                except Exception as upload_err:
+                    logging.error(f"Failed to upload {video_path}: {upload_err}")
+
+        except Exception as e:
+            logging.error(f"Critical error in TikTok upload workflow: {e}")
+
+        return success_count

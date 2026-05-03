@@ -35,12 +35,16 @@ class SandboxTester:
                  import os
                  abs_code_path = os.path.abspath(code_path)
 
+                 # Since we cannot know the dependencies beforehand and generating random python code
+                 # will likely require requests, bs4, etc., we use bash to pip install dynamically
+                 # if there are imports.
                  docker_command = [
                      "docker", "run", "--rm",
-                     "--memory", "512m", # Restrict memory
-                     "--cpus", "1.0", # Restrict CPU
+                     "--memory", "512m",
+                     "--cpus", "1.0",
                      "-v", f"{abs_code_path}:/app/script.py",
-                     "python:3.12-slim", "python", "/app/script.py"
+                     "python:3.12-slim", "bash", "-c",
+                     "pip install requests beautifulsoup4 pandas playwright && python /app/script.py"
                  ]
 
                  process = subprocess.run(
