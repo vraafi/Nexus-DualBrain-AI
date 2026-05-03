@@ -17,11 +17,11 @@ class TelegramAgent:
                  json={"chat_id": self.chat_id, "text": f"Here are the Veo 3 videos for product link: {product_link}"}
              )
 
-             # Send videos (simulated here as we don't have real files or a valid token)
+             # Send actual video files
              for video in video_paths:
-                  logging.info(f"Simulating sending video {video} to chat {self.chat_id}")
-                  # with open(video, 'rb') as f:
-                  #     requests.post(f"{self.base_url}/sendVideo", data={"chat_id": self.chat_id}, files={"video": f})
+                  logging.info(f"Sending video {video} to chat {self.chat_id}")
+                  with open(video, 'rb') as f:
+                      requests.post(f"{self.base_url}/sendVideo", data={"chat_id": self.chat_id}, files={"video": f})
              return True
         except Exception as e:
              logging.error(f"Failed to send to Telegram: {e}")

@@ -22,7 +22,16 @@ SLEEP_DURATION = 7200 # 2 hours resting period to cool down
 def run_workflow():
     api_keys = [os.environ.get(f"GEMINI_KEY_{i}", f"mock_key_{i}") for i in range(1, 11)]
     llm = GeminiClient(api_keys)
-    telegram = TelegramAgent("mock_token", "mock_chat_id")
+
+    # Load Telegram credentials from environment variables as requested
+    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not telegram_token or not telegram_chat_id:
+        logging.warning("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set. Real delivery will fail.")
+        telegram_token = "mock_token"
+        telegram_chat_id = "mock_chat_id"
+
+    telegram = TelegramAgent(telegram_token, telegram_chat_id)
     branding = FreelanceBranding()
     sandbox = SandboxTester(duration_minutes=15, llm_client=llm)
 
@@ -70,11 +79,23 @@ def run_workflow():
         save_state(task_id, "RUNNING", "freelance_jules_phase", {})
         branding.get_branding_strategy("upwork")
 
+        client_request = "Create an AI orchestration script for scraping data."
+
+        with BrowserAgent(headless=False) as browser:
+             gemini_web = GeminiWebAgent(browser)
+             negotiation_advice = gemini_web.get_negotiation_advice(client_request)
+             logging.info(f"Negotiation strategy received from Mentor: {negotiation_advice}")
+        gc.collect()
+
         with BrowserAgent(headless=False) as browser:
              jules = JulesAgent(browser, llm)
              # User requested to click specific repository
              repo_to_click = "vraafi/Nexus-DualBrain-AI"
-             code_path = jules.submit_task_to_jules(repo_to_click, "Create an AI orchestration script.")
+
+             # The agent now passes the actual mentor advice/instructions to Jules
+             prompt_for_jules = f"Berdasarkan saran mentor: {negotiation_advice}, tolong buatkan script python untuk klien: '{client_request}'"
+
+             code_path = jules.submit_task_to_jules(repo_to_click, prompt_for_jules)
         gc.collect()
 
         # Step 8: Sandbox Testing with Infinite Self-Correction Loop

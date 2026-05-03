@@ -2,6 +2,8 @@ import logging
 import time
 import subprocess
 from duckduckgo_search import DDGS
+from browser_agent import BrowserAgent
+from gemini_web_agent import GeminiWebAgent
 
 class SandboxTester:
     def __init__(self, duration_minutes=15, llm_client=None):
@@ -26,10 +28,23 @@ class SandboxTester:
              try:
                  logging.info(f"Test Attempt {attempt}...")
 
-                 test_duration = min(self.duration, 5) # Run for 5 seconds max for testing
+                 test_duration = self.duration # Run for full requested duration (15-60m)
+
+                 # Real subprocess execution using Docker for secure isolation
+                 # Must use absolute path for Docker volume mounting
+                 import os
+                 abs_code_path = os.path.abspath(code_path)
+
+                 docker_command = [
+                     "docker", "run", "--rm",
+                     "--memory", "512m", # Restrict memory
+                     "--cpus", "1.0", # Restrict CPU
+                     "-v", f"{abs_code_path}:/app/script.py",
+                     "python:3.12-slim", "python", "/app/script.py"
+                 ]
 
                  process = subprocess.run(
-                     ["python", code_path],
+                     docker_command,
                      capture_output=True,
                      text=True,
                      timeout=test_duration
@@ -70,6 +85,18 @@ class SandboxTester:
                               logging.info("Applied fix to code.")
                       except Exception as llm_err:
                           logging.error(f"Failed to get fix from LLM: {llm_err}")
+
+                 if attempt == 7:
+                      logging.error("Failed 7 times. Asking Mentor Gemini for final advice...")
+                      with BrowserAgent(headless=False) as browser:
+                          gemini = GeminiWebAgent(browser)
+                          advice = gemini.get_failure_advice(error_msg[-300:])
+                          logging.info(f"Mentor final decision: {advice}")
+
+                          # Execute graceful cancellation by logging the apology
+                          with open("cancellation_report.log", "a") as f:
+                              f.write(f"Task Failed. Mentor advised sending to client:\n{advice}\n\n")
+                          return False
 
                  attempt += 1
                  time.sleep(5)
