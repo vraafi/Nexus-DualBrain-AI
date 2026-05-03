@@ -1,124 +1,102 @@
-import os
-import shutil
 import logging
 import time
 import subprocess
-import sys
+from duckduckgo_search import DDGS
+from browser_agent import BrowserAgent
+from gemini_web_agent import GeminiWebAgent
 
 class SandboxTester:
-    def __init__(self, database):
-        self.db = database
-        self.sandbox_dir = os.path.join(os.getcwd(), "client_sandbox")
+    def __init__(self, duration_minutes=15, llm_client=None):
+        self.duration = duration_minutes * 60
+        self.llm = llm_client
 
-    def setup_sandbox(self):
-        """Creates a clean directory for testing generated code."""
-        logging.info("Setting up client sandbox...")
-        if os.path.exists(self.sandbox_dir):
-            shutil.rmtree(self.sandbox_dir)
-        os.makedirs(self.sandbox_dir, exist_ok=True)
-        logging.info(f"Sandbox created at {self.sandbox_dir}")
-
-    def test_and_monitor_code(self, client_id, code_string, duration_minutes=15):
-        """Runs the generated code in a subprocess within the sandbox for a specified duration."""
-        self.db.update_task_state(f"sandbox_test_{client_id}", "IN_PROGRESS")
-        self.setup_sandbox()
-
-        if not code_string:
-             logging.error(f"No code provided to sandbox tester for {client_id}.")
-             self.db.update_task_state(f"sandbox_test_{client_id}", "FAILED", "No code provided.")
-             return False
-
-        logging.info(f"Writing generated code into sandbox for {client_id}...")
-        test_file = os.path.join(self.sandbox_dir, "app.py")
-        with open(test_file, "w") as f:
-            f.write(code_string)
-
-        # Write a simple requirements file if the LLM output hints at external dependencies
-        # In a fully AGI scenario, this would be generated alongside the code
-        req_file = os.path.join(self.sandbox_dir, "requirements.txt")
-        with open(req_file, "w") as f:
-            f.write("flake8==7.0.0\n")
-
-        logging.info(f"Starting Static Analysis and Subprocess execution for up to {duration_minutes} minutes...")
-
+    def _search_error(self, error_message):
+        logging.info("Searching DuckDuckGo for error solution...")
         try:
-            timeout_seconds = duration_minutes * 60
-            container_name = f"sandbox_{client_id}_{int(time.time())}"
-
-            # Use a slightly more capable image and install dependencies first
-            # We use an entrypoint script to run flake8 validation then execute the code
-            entrypoint_script = """
-            pip install -r requirements.txt > /dev/null 2>&1
-            echo 'Running Static Analysis (flake8)...'
-            flake8 app.py --max-line-length=120
-            if [ $? -ne 0 ]; then
-                echo 'Static Analysis Failed.'
-                exit 1
-            fi
-            echo 'Static Analysis Passed. Executing code...'
-            python app.py
-            """
-            entry_file = os.path.join(self.sandbox_dir, "entry.sh")
-            with open(entry_file, "w") as f:
-                f.write(entrypoint_script)
-            os.chmod(entry_file, 0o755)
-
-            # SECURE EXECUTION: Run the code inside an isolated Docker container.
-            # Networking is required ONLY briefly if pip install is needed, but for strict
-            # security we can build a pre-packaged image offline. Since this is an alpine base,
-            # we allow bridged network just to install flake8, but strictly limit memory.
-            docker_cmd = [
-                "docker", "run", "--rm",
-                "--name", container_name,
-                "--memory", "350m",  # Restrict memory to protect host
-                "--cpus", "0.5",     # Restrict CPU
-                "-v", f"{self.sandbox_dir}:/usr/src/app", # Mount directory
-                "-w", "/usr/src/app",
-                "python:3.12-alpine",
-                "sh", "entry.sh"
-            ]
-
-            logging.info(f"Starting Docker validation & execution for {client_id}...")
-
-            process = subprocess.run(
-                docker_cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds
-            )
-
-            logging.info(f"Docker process exited with return code: {process.returncode}")
-            logging.info(f"STDOUT: {process.stdout.strip()}")
-            if process.stderr:
-                logging.warning(f"STDERR: {process.stderr.strip()}")
-
-            if process.returncode == 0:
-                 logging.info("Code passed both Static Analysis and Runtime Execution.")
-                 test_passed = True
-            else:
-                 logging.error("Code failed Static Analysis or Runtime Execution.")
-                 test_passed = False
-
-        except subprocess.TimeoutExpired:
-            logging.info(f"Process ran successfully for the full {duration_minutes} minutes without crashing.")
-            test_passed = True
-            # Cleanup container on timeout
-            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+             results = DDGS().text(error_message, max_results=3)
+             return "\n".join([r.get('body', '') for r in results])
         except Exception as e:
-            logging.error(f"Sandbox execution error: {e}")
-            test_passed = False
+             logging.error(f"Search failed: {e}")
+             return "No search results."
 
-            # Attempt cleanup on error
-            try:
-                 subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
-            except:
-                 pass
+    def test_code(self, code_path):
+        logging.info(f"Setting up sandbox environment for {code_path}. Running for {self.duration}s.")
 
-        if test_passed:
-            logging.info(f"Sandbox testing for {client_id} completed successfully.")
-            self.db.update_task_state(f"sandbox_test_{client_id}", "COMPLETED", "Code executed successfully.")
-            return True
-        else:
-            logging.error(f"Sandbox testing for {client_id} failed.")
-            self.db.update_task_state(f"sandbox_test_{client_id}", "FAILED", "Errors encountered during execution.")
-            return False
+        attempt = 1
+        # Infinite self-correction loop as requested
+        while True:
+             try:
+                 logging.info(f"Test Attempt {attempt}...")
+
+                 test_duration = self.duration # Run for full requested duration (15-60m)
+
+                 # Real subprocess execution using Docker for secure isolation
+                 # Must use absolute path for Docker volume mounting
+                 import os
+                 abs_code_path = os.path.abspath(code_path)
+
+                 docker_command = [
+                     "docker", "run", "--rm",
+                     "--memory", "512m", # Restrict memory
+                     "--cpus", "1.0", # Restrict CPU
+                     "-v", f"{abs_code_path}:/app/script.py",
+                     "python:3.12-slim", "python", "/app/script.py"
+                 ]
+
+                 process = subprocess.run(
+                     docker_command,
+                     capture_output=True,
+                     text=True,
+                     timeout=test_duration
+                 )
+
+                 if process.returncode == 0:
+                     logging.info("Sandbox testing passed successfully.")
+                     return True
+                 else:
+                     raise Exception(f"Process exited with code {process.returncode}: {process.stderr}")
+
+             except subprocess.TimeoutExpired:
+                 logging.info("Process ran for the full duration without crashing. Considered successful.")
+                 return True
+
+             except Exception as e:
+                 error_msg = str(e)
+                 logging.warning(f"Execution failed: {error_msg}")
+
+                 logging.info("Initiating Self-Correction Loop...")
+                 search_context = self._search_error(error_msg[-200:]) # Search tail of error
+
+                 if self.llm:
+                      prompt = f"The code {code_path} failed with error: {error_msg}. Context: {search_context}. Please provide the full fixed code."
+                      logging.info("Asking Gemini API to fix code based on error and search context.")
+
+                      try:
+                          fixed_code = self.llm.generate_content(prompt)
+                          if fixed_code:
+                              # Strip markdown if present
+                              if "```python" in fixed_code:
+                                  fixed_code = fixed_code.split("```python")[1].split("```")[0].strip()
+                              elif "```" in fixed_code:
+                                  fixed_code = fixed_code.split("```")[1].strip()
+
+                              with open(code_path, "w") as f:
+                                  f.write(fixed_code)
+                              logging.info("Applied fix to code.")
+                      except Exception as llm_err:
+                          logging.error(f"Failed to get fix from LLM: {llm_err}")
+
+                 if attempt == 7:
+                      logging.error("Failed 7 times. Asking Mentor Gemini for final advice...")
+                      with BrowserAgent(headless=False) as browser:
+                          gemini = GeminiWebAgent(browser)
+                          advice = gemini.get_failure_advice(error_msg[-300:])
+                          logging.info(f"Mentor final decision: {advice}")
+
+                          # Execute graceful cancellation by logging the apology
+                          with open("cancellation_report.log", "a") as f:
+                              f.write(f"Task Failed. Mentor advised sending to client:\n{advice}\n\n")
+                          return False
+
+                 attempt += 1
+                 time.sleep(5)
