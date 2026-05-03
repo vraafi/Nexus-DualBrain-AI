@@ -1,10 +1,5 @@
-requests==2.31.0
-playwright==1.42.0
-playwright-stealth==1.0.6
-psutil==5.9.8
-python-dotenv==1.0.1
-pytz==2024.1
-cryptography==42.0.5
-# sqlite3 and gc are built-in python libraries
+playwright==1.43.0
 opencv-python-headless==4.9.0.80
-numpy<2
+requests==2.31.0
+duckduckgo-search==5.3.0
+beautifulsoup4==4.12.3

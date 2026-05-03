@@ -1,189 +1,102 @@
-import logging
 import time
+import logging
 import gc
-from datetime import datetime
-import pytz
+import uuid
+import os
 
-from database import DatabaseManager
-from llm_client import LLMClient
+from database import init_db, save_state, load_state
 from browser_agent import BrowserAgent
-from tiktok_veo_workflow import TikTokVeoWorkflow
-from freelance_workflow import FreelanceWorkflow
+from tiktok_agent import TikTokAgent
+from gemini_web_agent import GeminiWebAgent
+from veo_agent import VeoAgent
+from telegram_agent import TelegramAgent
+from jules_agent import JulesAgent
+from freelance_branding import FreelanceBranding
 from sandbox_tester import SandboxTester
-from resource_monitor import ResourceMonitor
-from financial_module import FinancialModule
-from telegram_notifier import TelegramNotifier
+from api_client import GeminiClient
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("agent_orchestrator.log"),
-        logging.StreamHandler()
-    ]
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def run_agent_cycle():
-    """Executes a single, strictly sequential cycle of the agent workflows with self-healing isolation."""
-    logging.info("--- Starting New Agent Cycle ---")
-    db = DatabaseManager()
-    finance = FinancialModule(db_path="agent_state.db")
-    llm = LLMClient(api_keys=[]) # Will be populated by freelance workflow check
-    browser = BrowserAgent()
+SLEEP_DURATION = 7200 # 2 hours resting period to cool down
+
+def run_workflow():
+    api_keys = [os.environ.get(f"GEMINI_KEY_{i}", f"mock_key_{i}") for i in range(1, 11)]
+    llm = GeminiClient(api_keys)
+    telegram = TelegramAgent("mock_token", "mock_chat_id")
+    branding = FreelanceBranding()
+    sandbox = SandboxTester(duration_minutes=15, llm_client=llm)
+
+    task_id = str(uuid.uuid4())
+    save_state(task_id, "STARTED", "init", {})
+    logging.info(f"Starting workflow task {task_id}. Hardware constraints active.")
 
     try:
-        # Instantiate workflows
-        freelance_wf = FreelanceWorkflow(browser, llm, db, finance)
-        notifier = TelegramNotifier()
-
-        # 1. Freelance Platform Checks (Messenger Role) & API Keys
-        freelance_wf.load_api_keys()
-
-        logging.info("Executing Freelance Platform interactions...")
-        accepted_job_context = freelance_wf.handle_freelance_platforms()
-
-        # Extract platform name from the job context if available, fallback to a default
-        platform_name = "Upwork"
-        if accepted_job_context and "[" in accepted_job_context and "]" in accepted_job_context:
-            platform_name = accepted_job_context.split("[")[1].split("]")[0]
-
-        # 2. Client Coding Task via GitHub and Jules (AGI Connected Workflow)
-        client_id = "pelanggan_01"
-        logging.info(f"Executing GitHub and Jules workflow for {client_id} based on acquired job context...")
-
-        # 3. Iterative Self-Correction Loop with Anti-Stuck Failsafe
-        attempt = 0
-        max_failsafe_limit = 7 # Ultimate abort limit to prevent literal infinite loop crashes
-        success = False
-        feedback_error = None
-        previous_code = None
-        research_context = None
-
-        while not success:
-            attempt += 1
-            logging.info(f"--- Code Generation Attempt {attempt} ---")
-
-            # Anti-Stuck Failsafe
-            if attempt > max_failsafe_limit:
-                logging.error(f"FAILSAFE TRIGGERED: Task for {client_id} failed {max_failsafe_limit} times despite web research. Aborting to prevent infinite loop.")
-                notifier.send_message(f"❌ *Tugas Dibatalkan (Failsafe)*\n\nTugas untuk klien {client_id} dibatalkan karena gagal diatasi setelah {max_failsafe_limit} kali percobaan mandiri.\n\nMemulai proses Graceful Cancellation ke klien...")
-
-                # Execute Graceful Cancellation
-                freelance_wf.cancel_and_notify_client(client_id, platform_name)
-                break
-
-            # If we've failed 3 times, trigger autonomous web research to help Jules
-            if attempt > 3 and feedback_error:
-                logging.info(f"Attempt {attempt}: Agent is struggling. Triggering Autonomous Web Research for the error...")
-                research_context = freelance_wf.research_error_with_duckduckgo(feedback_error)
-
-            generated_code = freelance_wf.manage_github_and_jules(
-                client_id,
-                job_context=accepted_job_context,
-                feedback_error=feedback_error,
-                previous_code=previous_code,
-                research_context=research_context
-            )
-
-            if generated_code:
-                 logging.info(f"Running sandbox tests for {client_id}...")
-                 sandbox_tester = SandboxTester(db)
-                 # test_and_monitor_code returns a tuple (success: bool, error_logs: str) to feed back
-                 test_passed, error_logs = sandbox_tester.test_and_monitor_code(client_id, generated_code, duration_minutes=15)
-
-                 if test_passed:
-                     success = True
-                     finance.record_transaction("GitHub/Jules", "Task Completed", 50.0, f"Successful autonomous task delivery for {client_id}")
-                     logging.info(f"Code for {client_id} executed perfectly on attempt {attempt}.")
-                     notifier.send_message(f"✅ *Pekerjaan Selesai!*\n\nKode untuk klien {client_id} berhasil dijalankan dengan sempurna di dalam Sandbox pada percobaan ke-{attempt}.")
-                 else:
-                     logging.error(f"Sandbox execution failed on attempt {attempt}. Capturing errors for AGI Self-Correction...")
-                     feedback_error = error_logs
-                     previous_code = generated_code
-            else:
-                 logging.error("Failed to generate code from Jules. Aborting loop.")
-                 break
-
-    except Exception as e:
-        logging.error(f"Error isolated in Freelance workflow cycle: {e}")
-
-    try:
-        # Explicit memory clear between major workflow sections
-        browser.quit()
-    except:
-        pass
-    gc.collect()
-
-    try:
-        # 3. TikTok & Veo 3 Video Generation Workflow
-        logging.info("Executing TikTok and Veo 3 Video Workflow...")
-        # Re-initialize browser for next isolated phase
-        browser = BrowserAgent()
-        tiktok_veo_wf = TikTokVeoWorkflow(browser, llm, db, finance)
-
-        if tiktok_veo_wf.analyze_and_download_tiktok_trends():
-            if tiktok_veo_wf.generate_prompts_and_process_images():
-                video_count = tiktok_veo_wf.generate_veo_videos_and_send_telegram()
-                if video_count:
-                    finance.record_transaction("TikTok Affiliate", "Videos Sent", 10.0, "Successful affiliate video generation sequence")
-
-    except Exception as e:
-        logging.error(f"Error isolated in TikTok Veo workflow cycle: {e}")
-
-    finally:
-        # Strict Exit Criteria: Clean up all resources
-        logging.info("Executing end-of-cycle cleanup...")
-        if browser:
-            browser.quit()
-        db.close()
-
-        # Ensure explicit references are dropped so garbage collection works properly
-        freelance_wf = None
-        tiktok_veo_wf = None
-        sandbox_tester = None
-        browser = None
-        llm = None
-        db = None
-        finance = None
-
+        # Step 1 & 2: TikTok Phase
+        save_state(task_id, "RUNNING", "tiktok_phase", {})
+        # Note: We use headless=False consistently as requested for background visibility
+        with BrowserAgent(headless=False) as browser:
+             tiktok = TikTokAgent(browser)
+             trends = tiktok.analyze_trends()
+             video_data = tiktok.download_videos(trends)
         gc.collect()
-        logging.info("--- Cycle Complete. Memory cleared. ---")
 
-def is_us_business_hours():
-    """Checks if the current time is between 09:00 and 15:00 EST."""
-    est = pytz.timezone('US/Eastern')
-    now_est = datetime.now(est)
+        # Step 3, 4, 5: Gemini Web Phase
+        save_state(task_id, "RUNNING", "gemini_web_phase", {"videos": video_data})
+        prompts_data = []
+        no_bg_paths = []
+        with BrowserAgent(headless=False) as browser:
+             gemini_web = GeminiWebAgent(browser)
+             prompts_data = gemini_web.generate_prompts(video_data)
+             if prompts_data and prompts_data[0].get("image_path"):
+                 no_bg_paths.append(gemini_web.remove_background(prompts_data[0].get("image_path")))
+        gc.collect()
 
-    # Business hours threshold (09:00 to 15:00)
-    if 9 <= now_est.hour < 15:
-        return True
-    return False
+        # Step 6: Veo 3 Video Gen
+        save_state(task_id, "RUNNING", "veo_phase", {"prompts": prompts_data})
+        final_videos = []
+        with BrowserAgent(headless=False) as browser:
+             veo = VeoAgent(browser)
+             for p_data in prompts_data:
+                 videos = veo.generate_videos(p_data, no_bg_paths[0] if no_bg_paths else None)
+                 final_videos.extend(videos)
+        gc.collect()
 
-def main():
-    """Main orchestration loop (18/7 cycle with dynamic timezone rest)."""
-    logging.info("Nexus-DualBrain-AI Agent Started.")
+        # Step 6b: Telegram Delivery
+        save_state(task_id, "RUNNING", "telegram_phase", {"final_videos": final_videos})
+        if prompts_data:
+            telegram.send_video_and_link(final_videos, prompts_data[0].get("link"))
 
-    # 24/7 Continuous Loop for Full Autonomy
-    while True:
-        if is_us_business_hours():
-             logging.info("Current time is within US business hours (09:00-15:00 EST). Entering 6-hour sleep mode to avoid bot detection.")
-             # Fulfill user requirement to sleep during US peak hours
-             time.sleep(6 * 3600) # 6 hours
-             continue
+        # Step 7: Freelance & Jules
+        save_state(task_id, "RUNNING", "freelance_jules_phase", {})
+        branding.get_branding_strategy("upwork")
 
-        # Check resources before starting the cycle
-        resource_monitor = ResourceMonitor()
-        if not resource_monitor.is_safe_to_proceed():
-            logging.warning("Hardware resources strained. Deferring agent cycle and entering micro-sleep.")
-            time.sleep(600) # Sleep for 10 minutes and check again
-            continue
+        with BrowserAgent(headless=False) as browser:
+             jules = JulesAgent(browser, llm)
+             # User requested to click specific repository
+             repo_to_click = "vraafi/Nexus-DualBrain-AI"
+             code_path = jules.submit_task_to_jules(repo_to_click, "Create an AI orchestration script.")
+        gc.collect()
 
-        run_agent_cycle()
+        # Step 8: Sandbox Testing with Infinite Self-Correction Loop
+        if code_path and os.path.exists(code_path):
+            save_state(task_id, "RUNNING", "sandbox_phase", {"code": code_path})
+            sandbox.test_code(code_path)
+        else:
+            logging.warning("No code path returned from Jules. Skipping sandbox.")
 
-        # Hardware cooldown after a full cycle load
-        rest_seconds = 7200 # Standard 2 hours cooldown
-        logging.info(f"Hardware cooling phase. Sleeping for {rest_seconds} seconds...")
-        time.sleep(rest_seconds)
+        save_state(task_id, "COMPLETED", "done", {"final_status": "Success"})
+        logging.info(f"Task {task_id} completed successfully.")
+
+        with open("completion_report.log", "a") as f:
+            f.write(f"Task {task_id} finished at {time.ctime()}.\n")
+
+    except Exception as e:
+        logging.error(f"Workflow failed: {e}")
+        save_state(task_id, "FAILED", "error", {"error": str(e)})
 
 if __name__ == "__main__":
-    main()
+    init_db()
+    logging.info("Starting Agentic Workflow loop. Target: 18/7 operation.")
+
+    # Run once for testing
+    run_workflow()
