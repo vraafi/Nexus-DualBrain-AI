@@ -119,5 +119,12 @@ if __name__ == "__main__":
     init_db()
     logging.info("Starting Agentic Workflow loop. Target: 18/7 operation.")
 
-    # Run once for testing
-    run_workflow()
+    # 18/7 Continuous loop requirement
+    while True:
+        try:
+             run_workflow()
+             logging.info(f"Cycle complete. Cooling down hardware for {SLEEP_DURATION} seconds...")
+             time.sleep(SLEEP_DURATION)
+        except Exception as e:
+             logging.error(f"Critical outer loop failure: {e}")
+             time.sleep(60) # Wait before retry
