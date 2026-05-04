@@ -6,9 +6,7 @@ import os
 
 from database import init_db, save_state, load_state, get_last_incomplete_task
 from browser_agent import BrowserAgent
-from tiktok_agent import TikTokAgent
 from gemini_web_agent import GeminiWebAgent
-from veo_agent import VeoAgent
 from telegram_agent import TelegramAgent
 from jules_agent import JulesAgent
 from freelance_branding import FreelanceBranding
@@ -41,88 +39,17 @@ def run_workflow():
         task_id = last_task["task_id"]
         current_step = last_task["current_step"]
         logging.info(f"Recovered incomplete task {task_id} at step {current_step}")
-        video_data = last_task.get("data", {}).get("videos", [])
-        prompts_data = last_task.get("data", {}).get("prompts", [])
-        no_bg_paths = last_task.get("data", {}).get("no_bg_paths", [])
-        final_videos = last_task.get("data", {}).get("final_videos", [])
     else:
         task_id = str(uuid.uuid4())
-        current_step = "init"
-        video_data = []
-        prompts_data = []
-        no_bg_paths = []
-        final_videos = []
+        current_step = "freelance_job_hunt_phase"
 
     save_state(task_id, "STARTED", current_step, {})
     logging.info(f"Starting/Resuming workflow task {task_id}. Hardware constraints active.")
 
     try:
-        if current_step in ["init", "tiktok_phase"]:
-            # Step 1 & 2: TikTok Phase
-            save_state(task_id, "RUNNING", "tiktok_phase", {})
-            # Note: We use headless=False consistently as requested for background visibility
-            with BrowserAgent(headless=False) as browser:
-                 tiktok = TikTokAgent(browser)
-                 trends = tiktok.analyze_trends()
-                 video_data = tiktok.download_videos(trends)
-            gc.collect()
-            current_step = "gemini_web_phase"
-
-        if current_step == "gemini_web_phase":
-            # Step 3, 4, 5: Gemini Web Phase
-            save_state(task_id, "RUNNING", "gemini_web_phase", {"videos": video_data})
-            prompts_data = []
-            no_bg_paths = []
-            with BrowserAgent(headless=False) as browser:
-                 gemini_web = GeminiWebAgent(browser)
-                 prompts_data = gemini_web.generate_prompts(video_data)
-                 # Apply background removal for each generated prompt
-                 for p_data in prompts_data:
-                     if p_data.get("image_path"):
-                         no_bg_path = gemini_web.remove_background(p_data.get("image_path"))
-                         no_bg_paths.append(no_bg_path)
-                     else:
-                         no_bg_paths.append(None)
-            gc.collect()
-            current_step = "veo_phase"
-
-        if current_step == "veo_phase":
-            # Step 6: Veo 3 Video Gen
-            save_state(task_id, "RUNNING", "veo_phase", {
-                "prompts": prompts_data,
-                "no_bg_paths": no_bg_paths,
-                "videos": video_data
-            })
-            final_videos = []
-            with BrowserAgent(headless=False) as browser:
-                 veo = VeoAgent(browser)
-                 for idx, p_data in enumerate(prompts_data):
-                     # Use the corresponding background-removed image for each product
-                     bg_image = no_bg_paths[idx] if idx < len(no_bg_paths) else None
-                     videos = veo.generate_videos(p_data, bg_image)
-                     final_videos.extend(videos)
-            gc.collect()
-            current_step = "telegram_phase"
-
-        if current_step == "telegram_phase":
-            # Step 6b: Telegram Delivery
-            save_state(task_id, "RUNNING", "telegram_phase", {"final_videos": final_videos})
-            if prompts_data:
-                telegram.send_video_and_link(final_videos, prompts_data[0].get("link"))
-
-            # Step 6c: TikTok Affiliate Upload
-            save_state(task_id, "RUNNING", "tiktok_upload_phase", {"final_videos": final_videos})
-            if final_videos:
-                with BrowserAgent(headless=False) as browser:
-                    tiktok = TikTokAgent(browser)
-                    uploaded_count = tiktok.upload_videos(final_videos)
-                    logging.info(f"Successfully uploaded {uploaded_count} videos to TikTok.")
-            gc.collect()
-            current_step = "freelance_jules_phase"
-
-        if current_step == "freelance_jules_phase":
-            # Step 7: Freelance & Jules
-            save_state(task_id, "RUNNING", "freelance_jules_phase", {})
+        if current_step in ["init", "freelance_job_hunt_phase"]:
+            # Step 1: Freelance Job Hunting & Strategy Formulation
+            save_state(task_id, "RUNNING", "freelance_job_hunt_phase", {})
             branding.get_branding_strategy("upwork")
 
             # Use mentor to get a dynamic client request instead of hardcoding
@@ -156,7 +83,7 @@ def run_workflow():
             current_step = "sandbox_phase"
 
         if current_step == "sandbox_phase":
-            # Step 8: Sandbox Testing with Infinite Self-Correction Loop
+            # Step 3: Sandbox Testing with Infinite Self-Correction Loop
             # The variable code_path may not be available if resuming directly into this step,
             # so we check if the file exists from a previous run or skip.
             if 'code_path' not in locals():
@@ -169,6 +96,19 @@ def run_workflow():
                     raise Exception("Sandbox testing failed completely after 7 retries and mentor cancellation.")
             else:
                 raise Exception("No code path returned from Jules or missing. Skipping sandbox.")
+            current_step = "delivery_phase"
+
+        if current_step == "delivery_phase":
+            # Step 4: Deliver results via Telegram
+            save_state(task_id, "RUNNING", "delivery_phase", {})
+            if 'code_path' not in locals():
+                 code_path = "generated_script.py"
+
+            if os.path.exists(code_path):
+                telegram.send_document(code_path, caption="Freelance task completed and tested successfully.")
+                telegram.send_message("All systems green. Returning to job hunting cycle.")
+            else:
+                telegram.send_message("Task failed. Check logs for details.")
 
         save_state(task_id, "COMPLETED", "done", {"final_status": "Success"})
         logging.info(f"Task {task_id} completed successfully.")
