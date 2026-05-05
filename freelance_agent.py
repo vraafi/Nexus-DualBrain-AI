@@ -44,9 +44,13 @@ class FreelanceAgent:
 
             # Check for manual intervention (e.g., 2FA or CAPTCHA)
             if "login" in page.url or "challenge" in page.url:
-                logging.warning("Manual intervention required for login (2FA/Captcha). Switch headless=False.")
-                # We expect the orchestrator to handle the headless=False logic
+                logging.warning("Manual intervention required for login (2FA/Captcha).")
                 page.wait_for_timeout(15000) # Give user time if headless=False
+
+                # Check again after waiting to see if user solved it
+                if "login" in page.url or "challenge" in page.url:
+                    logging.error("Failed to bypass login wall.")
+                    return False
 
             logging.info("Upwork login sequence completed (verifying session externally).")
             return True

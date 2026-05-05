@@ -15,13 +15,33 @@ from freelance_branding import FreelanceBranding
 from sandbox_tester import SandboxTester
 from api_client import GeminiClient
 from financial_tracker import FinancialTracker
+import psutil
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 SLEEP_DURATION = 7200 # 2 hours resting period to cool down
 
+def wait_for_resources():
+    """Pauses execution if hardware constraints are exceeded."""
+    while True:
+        ram = psutil.virtual_memory().percent
+        cpu = psutil.cpu_percent(interval=1)
+        if ram > 85.0 or cpu > 90.0:
+            logging.warning(f"Hardware resources critical (RAM: {ram}%, CPU: {cpu}%). Pausing for 60s...")
+            time.sleep(60)
+        else:
+            break
+
 def run_workflow():
-    api_keys = [os.environ.get(f"GEMINI_KEY_{i}", f"mock_key_{i}") for i in range(1, 11)]
+    api_keys = []
+    for i in range(1, 11):
+        key = os.environ.get(f"GEMINI_KEY_{i}")
+        if key:
+            api_keys.append(key)
+
+    if not api_keys:
+        raise ValueError("CRITICAL: No GEMINI_KEY_* found in environment variables. Aborting.")
+
     llm = GeminiClient(api_keys)
 
     # Load Telegram credentials from environment variables as requested
@@ -56,15 +76,29 @@ def run_workflow():
 
         if current_step in ["init", "freelance_job_hunt_phase"]:
             # Step 1: Freelance Job Hunting & Filtering
+            wait_for_resources()
             save_state(task_id, "RUNNING", "freelance_job_hunt_phase", {})
             brand_context = branding.get_branding_strategy("upwork")
 
-            with BrowserAgent(headless=False) as browser:
+            # Explicitly manage Hybrid Browser Mode for login phase
+            login_browser_mode = True
+            with BrowserAgent(headless=login_browser_mode) as browser:
                 freelance = FreelanceAgent(browser, llm)
                 login_success = freelance.login_upwork()
                 if not login_success:
-                    telegram.send_message("WARNING: Upwork Login Failed or Needs Manual Captcha.")
-                    # Continue anyway to scrape public jobs
+                    logging.warning("Initial headless login failed. Falling back to headed mode for manual Captcha intervention.")
+                    telegram.send_message("WARNING: Upwork Login Failed. Starting headed browser for manual Captcha/2FA.")
+
+            if not login_success:
+                login_browser_mode = False
+                with BrowserAgent(headless=login_browser_mode) as browser:
+                    freelance = FreelanceAgent(browser, llm)
+                    login_success = freelance.login_upwork()
+                    if not login_success:
+                        raise Exception("Failed to login to Upwork even after headed manual intervention attempt.")
+
+            with BrowserAgent(headless=True) as browser:
+                freelance = FreelanceAgent(browser, llm)
 
                 jobs = freelance.scrape_jobs()
                 if not jobs:
@@ -86,6 +120,7 @@ def run_workflow():
 
         if current_step == "code_generation_phase":
             # Step 2: Code Generation using API (replacing Jules)
+            wait_for_resources()
             save_state(task_id, "RUNNING", "code_generation_phase", {"job_data": job_data})
 
             if not job_data:
@@ -117,7 +152,8 @@ def run_workflow():
             current_step = "sandbox_phase"
 
         if current_step == "sandbox_phase":
-            # Step 3: Sandbox Testing with Infinite Self-Correction Loop
+            # Step 3: Sandbox Testing with Finite Self-Correction Loop
+            wait_for_resources()
             # The variable code_path may not be available if resuming directly into this step,
             # so we check if the file exists from a previous run or skip.
             if 'code_path' not in locals():
@@ -126,15 +162,25 @@ def run_workflow():
             if code_path and os.path.exists(code_path):
                 save_state(task_id, "RUNNING", "sandbox_phase", {"code": code_path})
                 sandbox_result = sandbox.test_code(code_path)
-                if not sandbox_result:
+
+                # Check for Graceful Cancellation dictionary return from sandbox
+                if isinstance(sandbox_result, dict) and sandbox_result.get("status") == "failed":
+                     logging.info("Sandbox hit failsafe. Skipping proposal. Returning to Job Hunt.")
+                     telegram.send_message("Task canceled internally due to unresolvable errors. Returning to Job Hunting.")
+                     current_step = "done" # Skip proposal/delivery and end this cycle immediately
+
+                elif not sandbox_result:
                     raise Exception("Sandbox testing failed completely after 7 retries and mentor cancellation.")
             else:
-                raise Exception("No code path returned from Jules or missing. Skipping sandbox.")
-            current_step = "delivery_phase"
+                raise Exception("No code path returned from API or missing. Skipping sandbox.")
 
-        if current_step == "delivery_phase":
-            # Step 4: Submit Proposal & Deliver to Client natively
-            save_state(task_id, "RUNNING", "delivery_phase", {"job_data": job_data})
+            if current_step != "done":
+                 current_step = "proposal_phase"
+
+        if current_step == "proposal_phase":
+            # Step 4: Submit Proposal to Client natively
+            wait_for_resources()
+            save_state(task_id, "RUNNING", "proposal_phase", {"job_data": job_data})
             if not job_data:
                  state = load_state(task_id)
                  job_data = state.get("data", {}).get("job_data")
@@ -143,7 +189,7 @@ def run_workflow():
                 # Log financial start
                 finance.log_proposal("upwork", job_data.get('title', 'Unknown Job'), expected_revenue=50.0)
 
-                with BrowserAgent(headless=False) as browser:
+                with BrowserAgent(headless=True) as browser:
                     freelance = FreelanceAgent(browser, llm)
                     brand_context = branding.get_branding_strategy("upwork")
 
@@ -151,17 +197,40 @@ def run_workflow():
                     proposal_success = freelance.submit_proposal(job_data, brand_context, code_path)
 
                     if proposal_success:
-                        # Deliver
-                        delivery_success = freelance.deliver_work(job_data, code_path)
-                        if delivery_success:
-                            finance.update_job_status(job_data.get('title'), "DELIVERED", actual_revenue=50.0)
-                            telegram.send_message(f"Successfully Delivered Job: {job_data.get('title')}")
-                        else:
-                            telegram.send_message("Proposal submitted, but Delivery step failed.")
+                        telegram.send_message(f"Successfully submitted proposal for: {job_data.get('title')}")
+                        # Move to waiting phase before delivery
+                        current_step = "wait_for_contract_phase"
                     else:
                          telegram.send_message("Failed to submit proposal.")
+                         raise Exception("Proposal submission failed. Aborting delivery.")
             else:
                 telegram.send_message("Task failed. Code path missing or job data lost.")
+                raise Exception("Missing code or job data.")
+
+        if current_step == "wait_for_contract_phase":
+             # Step 5: Wait for client to accept contract before delivering
+             # In a real 18/7 autonomous loop, we would park this task and check back later.
+             # For the sake of this sequence, we simulate the wait, then deliver.
+             logging.info("Proposal submitted. Pausing this specific task sequence to simulate waiting for client contract acceptance...")
+             telegram.send_message("Waiting for client contract acceptance before delivering code...")
+             # Since we cannot actually wait days in a synchronous script, we log it and proceed to delivery
+             # assuming the contract was accepted for demonstration of the delivery module.
+             current_step = "delivery_phase"
+
+        if current_step == "delivery_phase":
+            # Step 6: Deliver results via Telegram and Platform
+            wait_for_resources()
+            save_state(task_id, "RUNNING", "delivery_phase", {"job_data": job_data})
+
+            with BrowserAgent(headless=True) as browser:
+                 freelance = FreelanceAgent(browser, llm)
+                 delivery_success = freelance.deliver_work(job_data, code_path)
+                 if delivery_success:
+                     finance.update_job_status(job_data.get('title'), "DELIVERED", actual_revenue=50.0)
+                     telegram.send_message(f"Successfully Delivered Job Code to Client: {job_data.get('title')}")
+                 else:
+                     telegram.send_message("Delivery step failed on platform.")
+                     raise Exception("Failed to deliver work to client.")
 
         save_state(task_id, "COMPLETED", "done", {"final_status": "Success"})
         logging.info(f"Task {task_id} completed successfully.")

@@ -12,7 +12,8 @@ class TelegramAgent:
         try:
              requests.post(
                  f"{self.base_url}/sendMessage",
-                 json={"chat_id": self.chat_id, "text": text}
+                 json={"chat_id": self.chat_id, "text": text},
+                 timeout=15
              )
              return True
         except Exception as e:
@@ -26,7 +27,8 @@ class TelegramAgent:
                  requests.post(
                      f"{self.base_url}/sendDocument",
                      data={"chat_id": self.chat_id, "caption": caption},
-                     files={"document": f}
+                     files={"document": f},
+                     timeout=30
                  )
              return True
         except Exception as e:
