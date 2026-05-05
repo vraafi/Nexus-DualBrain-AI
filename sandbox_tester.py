@@ -2,13 +2,22 @@ import logging
 import time
 import subprocess
 from duckduckgo_search import DDGS
-from browser_agent import BrowserAgent
-from gemini_web_agent import GeminiWebAgent
+import os
 
 class SandboxTester:
     def __init__(self, duration_minutes=15, llm_client=None):
         self.duration = duration_minutes * 60
         self.llm = llm_client
+        self.venv_dir = "sandbox_env"
+        self._setup_venv()
+
+    def _setup_venv(self):
+        if not os.path.exists(self.venv_dir):
+            logging.info("Setting up lightweight virtual environment for sandbox testing...")
+            subprocess.run(["python3", "-m", "venv", self.venv_dir], check=True)
+            # Pre-install common scraping tools to avoid runtime install delays
+            pip_path = os.path.join(self.venv_dir, "bin", "pip")
+            subprocess.run([pip_path, "install", "requests", "beautifulsoup4", "playwright"], check=True)
 
     def _search_error(self, error_message):
         logging.info("Searching DuckDuckGo for error solution...")
@@ -30,25 +39,13 @@ class SandboxTester:
 
                  test_duration = self.duration # Run for full requested duration (15-60m)
 
-                 # Real subprocess execution using Docker for secure isolation
-                 # Must use absolute path for Docker volume mounting
-                 import os
+                 # Lightweight execution via local virtual environment to avoid Docker memory overhead
+                 # running alongside Chromium on 8GB RAM systems.
+                 python_exe = os.path.join(self.venv_dir, "bin", "python")
                  abs_code_path = os.path.abspath(code_path)
 
-                 # Since we cannot know the dependencies beforehand and generating random python code
-                 # will likely require requests, bs4, etc., we use bash to pip install dynamically
-                 # if there are imports.
-                 docker_command = [
-                     "docker", "run", "--rm",
-                     "--memory", "512m",
-                     "--cpus", "1.0",
-                     "-v", f"{abs_code_path}:/app/script.py",
-                     "python:3.12-slim", "bash", "-c",
-                     "pip install requests beautifulsoup4 pandas playwright && python /app/script.py"
-                 ]
-
                  process = subprocess.run(
-                     docker_command,
+                     [python_exe, abs_code_path],
                      capture_output=True,
                      text=True,
                      timeout=test_duration
@@ -91,16 +88,25 @@ class SandboxTester:
                           logging.error(f"Failed to get fix from LLM: {llm_err}")
 
                  if attempt == 7:
-                      logging.error("Failed 7 times. Asking Mentor Gemini for final advice...")
-                      with BrowserAgent(headless=False) as browser:
-                          gemini = GeminiWebAgent(browser)
-                          advice = gemini.get_failure_advice(error_msg[-300:])
-                          logging.info(f"Mentor final decision: {advice}")
+                      logging.error("Failed 7 times. Asking API LLM for cancellation apology...")
 
-                          # Execute graceful cancellation by logging the apology
-                          with open("cancellation_report.log", "a") as f:
-                              f.write(f"Task Failed. Mentor advised sending to client:\n{advice}\n\n")
-                          return False
+                      if self.llm:
+                          apology_prompt = (
+                              f"I am an autonomous freelance AI agent. I failed to execute the script after 7 tries. "
+                              f"The final error was: {error_msg[-300:]}. "
+                              "Please generate a professional, polite message to the client apologizing for the delay "
+                              "and explaining that I am stepping down from the project."
+                          )
+                          advice = self.llm.generate_content(apology_prompt)
+                      else:
+                          advice = "I apologize, but I encountered an unresolvable technical error and must cancel."
+
+                      logging.info(f"Apology generated: {advice}")
+
+                      # Execute graceful cancellation by logging the apology
+                      with open("cancellation_report.log", "a") as f:
+                          f.write(f"Task Failed. Message to client:\n{advice}\n\n")
+                      return False
 
                  attempt += 1
                  time.sleep(5)

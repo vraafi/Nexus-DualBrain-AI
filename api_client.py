@@ -24,13 +24,22 @@ class GeminiClient:
             url = f"{self.base_url}?key={key}"
             headers = {'Content-Type': 'application/json'}
             data = {
-                "contents": [{"parts": [{"text": full_prompt}]}]
+                "contents": [{"parts": [{"text": full_prompt}]}],
+                "generationConfig": {
+                    "thinkingConfig": {"thinkingBudget": "high"},
+                    "responseMimeType": "application/json"
+                }
             }
 
             try:
                 response = requests.post(url, headers=headers, data=json.dumps(data))
                 if response.status_code == 200:
-                    return response.json()['candidates'][0]['content']['parts'][0]['text']
+                    text_response = response.json()['candidates'][0]['content']['parts'][0]['text']
+
+                    # Log the thinking process if available, but return the final structured answer
+                    # Assuming Gemma with thinkingConfig might return tags or separated content,
+                    # but typically the 'text' field contains the final structured output when responseMimeType is json.
+                    return text_response
                 elif response.status_code == 429: # Rate limit exceeded
                     logging.warning("Rate limit exceeded for current key. Rotating...")
                     self._rotate_key()

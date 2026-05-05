@@ -33,12 +33,35 @@ def display_active_tasks():
         print(f"  Error reading database: {e}")
     print("-" * 60)
 
+def display_financial_stats():
+    print("[FINANCIAL SUMMARY]")
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+
+        # Check if table exists
+        cursor.execute("SELECT count(name) FROM sqlite_master WHERE type='table' AND name='finance_log'")
+        if cursor.fetchone()[0] == 1:
+            cursor.execute('SELECT COUNT(*), SUM(actual_revenue) FROM finance_log WHERE status = "DELIVERED" OR status = "PAID"')
+            row = cursor.fetchone()
+            completed = row[0] if row[0] else 0
+            revenue = row[1] if row[1] else 0.0
+            print(f"  Delivered Jobs: {completed}")
+            print(f"  Total Revenue : ${revenue:.2f}")
+        else:
+            print("  No financial data available yet.")
+        conn.close()
+    except Exception as e:
+        print(f"  Error reading financial data: {e}")
+    print("-" * 60)
+
 def main():
     try:
         while True:
             print_header()
             display_hardware_stats()
             display_active_tasks()
+            display_financial_stats()
             print("\nPress Ctrl+C to exit dashboard.")
             time.sleep(2)
     except KeyboardInterrupt:
