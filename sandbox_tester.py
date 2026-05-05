@@ -45,17 +45,52 @@ class SandboxTester:
 
                  test_duration = self.duration # Run for full requested duration (15-60m)
 
-                 # Lightweight execution via local virtual environment to avoid Docker memory overhead
-                 # running alongside Chromium on 8GB RAM systems.
-                 python_exe = os.path.join(self.venv_dir, "bin", "python")
+                 # Execute via Bubblewrap (bwrap) for lightweight but secure isolation
+                 # This prevents LLM prompt injection RCEs from accessing the host OS
+                 # while remaining light enough for 8GB RAM systems (unlike Docker).
+
+                 python_exe = os.path.join(os.path.abspath(self.venv_dir), "bin", "python")
                  abs_code_path = os.path.abspath(code_path)
 
-                 process = subprocess.run(
-                     [python_exe, abs_code_path],
-                     capture_output=True,
-                     text=True,
-                     timeout=test_duration
-                 )
+                 # CREATE ISOLATED SANDBOX DIRECTORY
+                 # Never bind the project root. Create a dedicated temp folder for execution.
+                 import shutil
+                 sandbox_tmp_dir = os.path.abspath("./client_sandbox")
+                 if not os.path.exists(sandbox_tmp_dir):
+                     os.makedirs(sandbox_tmp_dir)
+
+                 isolated_script_path = os.path.join(sandbox_tmp_dir, os.path.basename(code_path))
+                 shutil.copy2(abs_code_path, isolated_script_path)
+
+                 bwrap_cmd = [
+                     "bwrap",
+                     "--ro-bind", "/usr", "/usr",
+                     "--ro-bind", "/lib", "/lib",
+                     "--ro-bind", "/lib64", "/lib64",
+                     "--ro-bind", "/bin", "/bin",
+                     "--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf",
+                     "--ro-bind", "/etc/ssl", "/etc/ssl",
+                     "--ro-bind", os.path.abspath(self.venv_dir), os.path.abspath(self.venv_dir),
+                     "--bind", sandbox_tmp_dir, sandbox_tmp_dir, # Only bind the empty isolated folder
+                     "--unshare-pid",
+                     "--unshare-ipc",
+                     "--die-with-parent",
+                     "--setenv", "PATH", "/usr/bin:/bin",
+                     "--chdir", sandbox_tmp_dir,
+                     python_exe, isolated_script_path
+                 ]
+
+                 try:
+                     process = subprocess.run(
+                         bwrap_cmd,
+                         capture_output=True,
+                         text=True,
+                         timeout=test_duration
+                     )
+                 finally:
+                     # Clean up isolated script to prevent state leakage
+                     if os.path.exists(isolated_script_path):
+                         os.remove(isolated_script_path)
 
                  if process.returncode == 0:
                      logging.info("Sandbox testing passed successfully.")
@@ -94,7 +129,7 @@ class SandboxTester:
                           logging.error(f"Failed to get fix from LLM: {llm_err}")
 
                  if attempt == 7:
-                      logging.error("Failed 7 times. Asking API LLM for cancellation apology...")
+                      logging.error("Failed 7 times. Initiating Graceful Cancellation to Client...")
 
                       if self.llm:
                           apology_prompt = (
@@ -109,10 +144,18 @@ class SandboxTester:
 
                       logging.info(f"Apology generated: {advice}")
 
-                      # Execute graceful cancellation by logging the apology
+                      # Execute true graceful cancellation by writing it to the script path
+                      # so the delivery phase can attach it or send it, fulfilling the requirement to
+                      # actually communicate with the client instead of ghosting them.
+                      apology_file = "apology_message.txt"
+                      with open(apology_file, "w") as f:
+                          f.write(advice)
+
                       with open("cancellation_report.log", "a") as f:
-                          f.write(f"Task Failed. Message to client:\n{advice}\n\n")
-                      return False
+                          f.write(f"Task Failed. Apology drafted to {apology_file}:\n{advice}\n\n")
+
+                      # Return a distinct failure tuple/object to trigger the apology flow in main
+                      return {"status": "failed", "apology_file": apology_file}
 
                  attempt += 1
                  time.sleep(5)

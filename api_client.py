@@ -34,7 +34,8 @@ class GeminiClient:
                 data["generationConfig"]["responseMimeType"] = "application/json"
 
             try:
-                response = requests.post(url, headers=headers, data=json.dumps(data))
+                # Set a 60-second timeout for heavy LLM generations, especially on 'high' thinking budget
+                response = requests.post(url, headers=headers, data=json.dumps(data), timeout=60)
                 if response.status_code == 200:
                     text_response = response.json()['candidates'][0]['content']['parts'][0]['text']
 

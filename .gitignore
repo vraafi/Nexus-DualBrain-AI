@@ -12,3 +12,11 @@ browser_state.json
 storage/
 *.key
 *.enc
+*.salt
+.env
+
+# Playwright Persistent Context
+browser_profile/
+
+# Local Virtualenv
+sandbox_env/
