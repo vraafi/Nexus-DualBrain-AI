@@ -23,18 +23,18 @@ class FreelanceAgent:
             self.browser.navigate("https://www.upwork.com/ab/account-security/login")
             page.wait_for_timeout(3000)
 
-            # Handle username
+            # Handle username - Use robust fallback locators
             try:
-                username_input = page.locator("input[name='login[username]']")
+                username_input = page.locator("input[name='login[username]'], input[type='email'], input[id='login_username']").first
                 username_input.fill(creds["username"])
                 page.keyboard.press("Enter")
                 page.wait_for_timeout(3000)
             except Exception as e:
                 logging.warning(f"Could not enter username: {e}")
 
-            # Handle password
+            # Handle password - Use robust fallback locators
             try:
-                password_input = page.locator("input[name='login[password]']")
+                password_input = page.locator("input[name='login[password]'], input[type='password'], input[id='login_password']").first
                 if password_input.is_visible():
                     password_input.fill(creds["password"])
                     page.keyboard.press("Enter")
@@ -62,12 +62,12 @@ class FreelanceAgent:
             self.browser.navigate("https://www.upwork.com/nx/search/jobs/?q=python%20web%20scraping&sort=recency")
             page.wait_for_timeout(5000)
 
-            # Try to grab job titles and descriptions
-            job_cards = page.locator("section[data-ev-label='search_results_impression']").all()
+            # Try to grab job titles and descriptions - Use fallback locators for lists
+            job_cards = page.locator("section[data-ev-label='search_results_impression'], article.job-tile, div.job-tile").all()
             for card in job_cards[:5]:
                 try:
-                    title = card.locator("h2, h3").first.inner_text()
-                    description = card.locator("div[data-test='job-description-text'], span[data-test='job-description-text']").first.inner_text()
+                    title = card.locator("h2, h3, a.up-n-link").first.inner_text()
+                    description = card.locator("div[data-test='job-description-text'], span[data-test='job-description-text'], div.job-description").first.inner_text()
                     url = card.locator("a").first.get_attribute("href")
                     if url and not url.startswith("http"):
                         url = "https://www.upwork.com" + url
@@ -125,7 +125,7 @@ class FreelanceAgent:
 
         return False, "LLM filter failed"
 
-    def submit_proposal(self, job_data, script_path=None):
+    def submit_proposal(self, job_data, branding_context=None, script_path=None):
         logging.info(f"Submitting proposal for: {job_data.get('title')}")
         try:
             page = self.browser.page
@@ -134,14 +134,18 @@ class FreelanceAgent:
                 page.wait_for_timeout(3000)
 
                 # Check for Apply Now button
-                apply_buttons = page.locator("button:has-text('Apply Now')").all()
+                apply_buttons = page.locator("button:has-text('Apply Now'), a:has-text('Apply Now')").all()
                 if apply_buttons:
                     apply_buttons[0].click()
                     page.wait_for_timeout(5000)
 
-                    # Fill cover letter
+                    # Personalize cover letter using branding context if available
+                    base_intro = "Hello, I am a backend specialist specializing in Python automation."
+                    if branding_context and "persona" in branding_context:
+                         base_intro = f"Hello, I am a {branding_context['persona']} specializing in Python."
+
                     cover_letter = (
-                        "Hello, I am a backend specialist specializing in Python automation. "
+                        f"{base_intro} "
                         "I have analyzed your requirements and can deliver a robust, headless automation script "
                         "to solve this issue efficiently. I am available to start immediately."
                     )
@@ -166,17 +170,45 @@ class FreelanceAgent:
             return False
 
     def deliver_work(self, job_data, file_path):
-        """Simulates delivering the final product to the client via the platform's messaging/delivery system."""
+        """Delivers the final product to the client via the platform's messaging/delivery system natively."""
         logging.info(f"Delivering completed work to client for job: {job_data.get('title')}")
         try:
             page = self.browser.page
-            # Navigate to the specific contract/message room
-            # Because we cannot reliably predict Upwork's internal message room URLs without an active session,
-            # this attempts a generalized approach or prompts the user.
-            logging.info(f"Attempting to attach {file_path} to client message room...")
-            # Mocking the actual file input since it heavily depends on active contract IDs
-            # In a real environment, the URL would be derived from the active contracts dashboard.
-            return True
+            # Navigate to the active contracts/messages dashboard
+            self.browser.navigate("https://www.upwork.com/nx/messages/")
+            page.wait_for_timeout(5000)
+
+            # Find the message room that matches the job title or latest active contract
+            try:
+                # In a real UI, we try to click the latest message room or search for the client
+                # Using a generic fallback to select the top active message thread
+                room = page.locator("div[data-test='message-room-list-item']").first
+                if room.is_visible():
+                    room.click()
+                    page.wait_for_timeout(3000)
+
+                    # Attach the file
+                    file_input = page.locator("input[type='file']").first
+                    if file_input:
+                        file_input.set_input_files(file_path)
+                        page.wait_for_timeout(2000)
+
+                    # Write delivery message
+                    msg_input = page.locator("div[contenteditable='true'], textarea").last
+                    msg_input.fill(f"Hello! I have completed the script for '{job_data.get('title')}'. Please find the tested code attached. Let me know if you need any adjustments.")
+
+                    # Send
+                    send_btn = page.locator("button[aria-label='Send message'], button:has-text('Send')").first
+                    send_btn.click()
+                    logging.info(f"Successfully delivered {file_path} to client natively via Upwork.")
+                    return True
+                else:
+                    logging.warning("No active message rooms found to deliver work.")
+                    return False
+            except Exception as msg_err:
+                logging.error(f"Failed to navigate message UI: {msg_err}")
+                return False
+
         except Exception as e:
-            logging.error(f"Error delivering work: {e}")
+            logging.error(f"Error delivering work natively: {e}")
             return False

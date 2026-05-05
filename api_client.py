@@ -16,7 +16,7 @@ class GeminiClient:
         self.current_key_idx = (self.current_key_idx + 1) % len(self.api_keys)
         logging.info(f"Rotated API key. Now using key index {self.current_key_idx}")
 
-    def generate_content(self, prompt, context=""):
+    def generate_content(self, prompt, context="", require_json=False):
         full_prompt = f"Context: {context}\n\nPrompt: {prompt}"
 
         for _ in range(len(self.api_keys)): # Try all keys before failing
@@ -26,10 +26,12 @@ class GeminiClient:
             data = {
                 "contents": [{"parts": [{"text": full_prompt}]}],
                 "generationConfig": {
-                    "thinkingConfig": {"thinkingBudget": "high"},
-                    "responseMimeType": "application/json"
+                    "thinkingConfig": {"thinkingLevel": "high"}
                 }
             }
+
+            if require_json:
+                data["generationConfig"]["responseMimeType"] = "application/json"
 
             try:
                 response = requests.post(url, headers=headers, data=json.dumps(data))

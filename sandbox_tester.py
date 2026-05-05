@@ -32,8 +32,14 @@ class SandboxTester:
         logging.info(f"Setting up sandbox environment for {code_path}. Running for {self.duration}s.")
 
         attempt = 1
-        # Infinite self-correction loop as requested
+        start_time = time.time()
+        max_total_duration = 30 * 60 # 30 minutes absolute maximum to prevent infinite/long loop blocking
+
         while True:
+             if time.time() - start_time > max_total_duration:
+                 logging.error("Total self-correction time exceeded 30 minutes. Aborting to prevent infinite loop.")
+                 return False
+
              try:
                  logging.info(f"Test Attempt {attempt}...")
 
