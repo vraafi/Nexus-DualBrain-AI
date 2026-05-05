@@ -3,6 +3,9 @@ import logging
 import gc
 import uuid
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from database import init_db, save_state, load_state, get_last_incomplete_task
 from browser_agent import BrowserAgent
@@ -54,7 +57,7 @@ def run_workflow():
         if current_step in ["init", "freelance_job_hunt_phase"]:
             # Step 1: Freelance Job Hunting & Filtering
             save_state(task_id, "RUNNING", "freelance_job_hunt_phase", {})
-            branding.get_branding_strategy("upwork")
+            brand_context = branding.get_branding_strategy("upwork")
 
             with BrowserAgent(headless=False) as browser:
                 freelance = FreelanceAgent(browser, llm)
@@ -142,9 +145,10 @@ def run_workflow():
 
                 with BrowserAgent(headless=False) as browser:
                     freelance = FreelanceAgent(browser, llm)
+                    brand_context = branding.get_branding_strategy("upwork")
 
                     # Submit Proposal
-                    proposal_success = freelance.submit_proposal(job_data, code_path)
+                    proposal_success = freelance.submit_proposal(job_data, brand_context, code_path)
 
                     if proposal_success:
                         # Deliver
