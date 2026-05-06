@@ -23,20 +23,20 @@ class FreelanceAgent:
             self.browser.navigate("https://www.upwork.com/ab/account-security/login")
             page.wait_for_timeout(3000)
 
-            # Handle username - Use robust fallback locators
+            # Handle username - Use robust fallback locators and human-typing
             try:
                 username_input = page.locator("input[name='login[username]'], input[type='email'], input[id='login_username']").first
-                username_input.fill(creds["username"])
+                self.browser.human_type(username_input, creds["username"])
                 page.keyboard.press("Enter")
                 page.wait_for_timeout(3000)
             except Exception as e:
                 logging.warning(f"Could not enter username: {e}")
 
-            # Handle password - Use robust fallback locators
+            # Handle password - Use robust fallback locators and human-typing
             try:
                 password_input = page.locator("input[name='login[password]'], input[type='password'], input[id='login_password']").first
                 if password_input.is_visible():
-                    password_input.fill(creds["password"])
+                    self.browser.human_type(password_input, creds["password"])
                     page.keyboard.press("Enter")
                     page.wait_for_timeout(5000)
             except Exception as e:
@@ -137,37 +137,38 @@ class FreelanceAgent:
                 self.browser.navigate(job_data.get("url"))
                 page.wait_for_timeout(3000)
 
-                # Check for Apply Now button
-                apply_buttons = page.locator("button:has-text('Apply Now'), a:has-text('Apply Now')").all()
-                if apply_buttons:
-                    apply_buttons[0].click()
+                # Check for Apply Now button with human-click
+                try:
+                    self.browser.human_click("button:has-text('Apply Now'), a:has-text('Apply Now')")
                     page.wait_for_timeout(5000)
+                except Exception as click_e:
+                    logging.warning(f"Failed to click Apply Now: {click_e}")
+                    return False
 
-                    # Personalize cover letter using branding context if available
-                    base_intro = "Hello, I am a backend specialist specializing in Python automation."
-                    if branding_context and "persona" in branding_context:
-                         base_intro = f"Hello, I am a {branding_context['persona']} specializing in Python."
+                # Personalize cover letter using branding context if available
+                base_intro = "Hello, I am a backend specialist specializing in Python automation."
+                if branding_context and "persona" in branding_context:
+                     base_intro = f"Hello, I am a {branding_context['persona']} specializing in Python."
 
-                    cover_letter = (
-                        f"{base_intro} "
-                        "I have analyzed your requirements and can deliver a robust, headless automation script "
-                        "to solve this issue efficiently. I am available to start immediately."
-                    )
-                    try:
-                        cover_letter_input = page.locator("textarea[aria-labelledby='cover_letter_label']").first
-                        if cover_letter_input.is_visible():
-                            cover_letter_input.fill(cover_letter)
-                    except Exception as e:
-                        logging.warning(f"Failed to fill cover letter: {e}")
+                cover_letter = (
+                    f"{base_intro} "
+                    "I have analyzed your requirements and can deliver a robust, headless automation script "
+                    "to solve this issue efficiently. I am available to start immediately."
+                )
+                try:
+                    cover_letter_input = page.locator("textarea[aria-labelledby='cover_letter_label']").first
+                    if cover_letter_input.is_visible():
+                        self.browser.human_type(cover_letter_input, cover_letter)
+                except Exception as e:
+                    logging.warning(f"Failed to fill cover letter: {e}")
 
-                    # Submit
-                    try:
-                        submit_btn = page.locator("button:has-text('Send for')").first
-                        submit_btn.click()
-                        logging.info("Proposal submitted successfully.")
-                        return True
-                    except Exception as e:
-                        logging.warning(f"Failed to click submit proposal: {e}")
+                # Submit via human click
+                try:
+                    self.browser.human_click("button:has-text('Send for')")
+                    logging.info("Proposal submitted successfully.")
+                    return True
+                except Exception as e:
+                    logging.warning(f"Failed to click submit proposal: {e}")
             return False
         except Exception as e:
             logging.error(f"Error submitting proposal: {e}")
@@ -188,7 +189,7 @@ class FreelanceAgent:
                 # Using a generic fallback to select the top active message thread
                 room = page.locator("div[data-test='message-room-list-item']").first
                 if room.is_visible():
-                    room.click()
+                    self.browser.human_click("div[data-test='message-room-list-item']")
                     page.wait_for_timeout(3000)
 
                     # Attach the file
@@ -197,13 +198,13 @@ class FreelanceAgent:
                         file_input.set_input_files(file_path)
                         page.wait_for_timeout(2000)
 
-                    # Write delivery message
+                    # Write delivery message via human_type
                     msg_input = page.locator("div[contenteditable='true'], textarea").last
-                    msg_input.fill(f"Hello! I have completed the script for '{job_data.get('title')}'. Please find the tested code attached. Let me know if you need any adjustments.")
+                    msg_text = f"Hello! I have completed the script for '{job_data.get('title')}'. Please find the tested code attached. Let me know if you need any adjustments."
+                    self.browser.human_type(msg_input, msg_text)
 
                     # Send
-                    send_btn = page.locator("button[aria-label='Send message'], button:has-text('Send')").first
-                    send_btn.click()
+                    self.browser.human_click("button[aria-label='Send message'], button:has-text('Send')")
                     logging.info(f"Successfully delivered {file_path} to client natively via Upwork.")
                     return True
                 else:
