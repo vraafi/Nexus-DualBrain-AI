@@ -13,8 +13,14 @@ The "DualBrain" concept refers to the strict separation of reasoning and executi
 - **Resource Limiter:** Includes `wait_for_resources` monitoring. If RAM exceeds 85% or CPU exceeds 90%, it pauses execution.
 - **Stealth Browsing:** Utilizes `playwright-stealth` and persistent profiles to evade bot detection.
 
+## Security Sandboxing
+This project securely sandboxes untrusted LLM-generated Python code using **Bubblewrap (`bwrap`)**. Rather than running code directly on your host OS or launching heavy Docker containers, `bwrap` provides a highly secure, memory-efficient chroot environment that drops access to environment variables, network, and host files.
+
 ## Quick Start
-1. Ensure Python 3.12+ is installed.
+1. Ensure Python 3.12+ and `bwrap` are installed on your Linux system.
+   ```bash
+   sudo apt-get update && sudo apt-get install -y bubblewrap
+   ```
 2. Install dependencies:
    ```bash
    pip install -r requirements.txt

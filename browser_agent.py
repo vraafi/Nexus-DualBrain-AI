@@ -4,6 +4,7 @@ import time
 import random
 from playwright.sync_api import sync_playwright
 from playwright_stealth import stealth_sync
+from python_ghost_cursor.playwright_sync import create_cursor
 
 class BrowserAgent:
     def __init__(self, headless=True):
@@ -34,11 +35,25 @@ class BrowserAgent:
             )
             self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
 
+            # Apply strict anti-bot measures: Match hardware to 8GB RAM specs to avoid fingerprint anomalies
+            init_scripts = """
+                Object.defineProperty(navigator, 'deviceMemory', {
+                    get: () => 8
+                });
+                Object.defineProperty(navigator, 'hardwareConcurrency', {
+                    get: () => 4
+                });
+            """
+            self.page.add_init_script(init_scripts)
+
             # Apply stealth to evade bot detection
             stealth_sync(self.page)
 
+            # Initialize Ghost Cursor
+            self.cursor = create_cursor(self.page)
+
             self.page.set_default_timeout(60000)
-            logging.info(f"Playwright browser initialized (headless={self.headless}, persistent_profile, stealth_enabled).")
+            logging.info(f"Playwright browser initialized (headless={self.headless}, persistent_profile, strict_stealth, ghost_cursor).")
         except Exception as e:
             logging.error(f"Failed to init browser: {e}")
             self.quit()
@@ -46,6 +61,25 @@ class BrowserAgent:
     def _human_delay(self, min_ms=1000, max_ms=3000):
         delay = random.uniform(min_ms, max_ms)
         time.sleep(delay / 1000.0)
+
+    def human_type(self, locator, text):
+        """Types text character by character with human-like delays."""
+        locator.click()
+        for char in text:
+            self.page.keyboard.type(char)
+            delay = random.uniform(50, 150) / 1000.0
+            time.sleep(delay)
+
+    def human_click(self, selector):
+        """Uses Ghost Cursor to simulate human mouse movement before clicking."""
+        try:
+            if hasattr(self, 'cursor'):
+                self.cursor.click(selector)
+            else:
+                self.page.click(selector)
+        except Exception as e:
+            logging.warning(f"Ghost cursor failed on {selector}, falling back to standard click. Error: {e}")
+            self.page.click(selector)
 
     def navigate(self, url):
         if not self.page:
@@ -64,10 +98,8 @@ class BrowserAgent:
         try:
             if self.context:
                 self.context.close()
-            if self.playwright:
-                self.playwright.stop()
         except Exception as e:
-            logging.error(f"Error closing Playwright: {e}")
+            logging.error(f"Error closing Playwright context: {e}")
         finally:
             self.page = None
             self.context = None
