@@ -17,9 +17,20 @@ from api_client import GeminiClient
 from financial_tracker import FinancialTracker
 import psutil
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+from logging.handlers import RotatingFileHandler
 
-SLEEP_DURATION = 7200 # 2 hours resting period to cool down
+# Implement RotatingFileHandler to optimize Disk I/O
+log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+log_file = "agent_activity.log"
+file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=2) # 5MB limit
+file_handler.setFormatter(log_formatter)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(log_formatter)
+
+logging.basicConfig(level=logging.INFO, handlers=[file_handler, console_handler])
+
+SLEEP_DURATION_LONG = 7200 # 2 hours resting period if no jobs found
+SLEEP_DURATION_SHORT = 1800 # 30 mins resting period after completing a job
 
 def wait_for_resources():
     """Pauses execution if hardware constraints are exceeded."""
@@ -72,7 +83,20 @@ def run_workflow():
 
     try:
         job_data = None
-        code_path = "generated_script.py"
+        # Generate unique code path to avoid overwriting and allow historical tracking
+        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+        code_path = f"generated_script_{timestamp_str}_{task_id[:8]}.py"
+
+        # Cleanup old generated scripts (older than 7 days)
+        try:
+            current_time = time.time()
+            for f in os.listdir("."):
+                if f.startswith("generated_script_") and f.endswith(".py"):
+                    if current_time - os.path.getmtime(f) > 7 * 86400:
+                        os.remove(f)
+                        logging.info(f"Cleaned up old script: {f}")
+        except Exception as e:
+            logging.warning(f"Cleanup failed: {e}")
 
         if current_step in ["init", "freelance_job_hunt_phase"]:
             # Step 1: Freelance Job Hunting & Filtering
@@ -132,6 +156,7 @@ def run_workflow():
                 f"Act as a senior backend Python developer. I have accepted the following freelance job:\n"
                 f"Title: {job_data.get('title')}\nDescription: {job_data.get('description')}\n"
                 "Write the complete, robust python script to solve this task. "
+                "Include relevant unit tests at the bottom of the script using the built-in `unittest` module. "
                 "Output ONLY valid Python code. Do not wrap in markdown or explain."
             )
 
@@ -227,7 +252,13 @@ def run_workflow():
                  delivery_success = freelance.deliver_work(job_data, code_path)
                  if delivery_success:
                      finance.update_job_status(job_data.get('title'), "DELIVERED", actual_revenue=50.0)
-                     telegram.send_message(f"Successfully Delivered Job Code to Client: {job_data.get('title')}")
+                     report = (
+                         f"✅ **TASK COMPLETED** ✅\n"
+                         f"**Job Title:** {job_data.get('title')}\n"
+                         f"**Status:** Delivered to Client\n"
+                         f"**Expected Revenue:** $50.00\n"
+                     )
+                     telegram.send_message(report)
                  else:
                      telegram.send_message("Delivery step failed on platform.")
                      raise Exception("Failed to deliver work to client.")
@@ -237,10 +268,15 @@ def run_workflow():
 
         with open("completion_report.log", "a") as f:
             f.write(f"Task {task_id} finished at {time.ctime()}.\n")
+        return SLEEP_DURATION_SHORT
 
     except Exception as e:
         logging.error(f"Workflow failed: {e}")
         save_state(task_id, "FAILED", "error", {"error": str(e)})
+        # Return longer sleep duration if no jobs were found or critical failure
+        if "No fully autonomous jobs found" in str(e) or "No jobs found" in str(e):
+             return SLEEP_DURATION_LONG
+        return SLEEP_DURATION_SHORT
 
 if __name__ == "__main__":
     init_db()
@@ -249,9 +285,10 @@ if __name__ == "__main__":
     # 18/7 Continuous loop requirement
     while True:
         try:
-             run_workflow()
-             logging.info(f"Cycle complete. Cooling down hardware for {SLEEP_DURATION} seconds...")
-             time.sleep(SLEEP_DURATION)
+             # Run workflow and get dynamic sleep duration
+             sleep_time = run_workflow()
+             logging.info(f"Cycle complete. Cooling down hardware for {sleep_time} seconds...")
+             time.sleep(sleep_time)
         except Exception as e:
              logging.error(f"Critical outer loop failure: {e}")
              time.sleep(60) # Wait before retry

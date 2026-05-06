@@ -15,9 +15,23 @@ class SandboxTester:
         if not os.path.exists(self.venv_dir):
             logging.info("Setting up lightweight virtual environment for sandbox testing...")
             subprocess.run(["python3", "-m", "venv", self.venv_dir], check=True)
-            # Pre-install common scraping tools to avoid runtime install delays
+            # Pre-install common scraping tools and testing tools
             pip_path = os.path.join(self.venv_dir, "bin", "pip")
-            subprocess.run([pip_path, "install", "requests", "beautifulsoup4", "playwright"], check=True)
+            subprocess.run([pip_path, "install", "requests", "beautifulsoup4", "playwright", "flake8", "pytest"], check=True)
+
+    def _static_analysis(self, code_path):
+        """Runs flake8 to catch syntax errors before executing."""
+        logging.info("Running static analysis via flake8...")
+        flake8_exe = os.path.join(self.venv_dir, "bin", "flake8")
+        try:
+            result = subprocess.run([flake8_exe, code_path], capture_output=True, text=True)
+            if result.returncode != 0:
+                 logging.warning(f"Static analysis found potential issues:\n{result.stdout}")
+                 return False, result.stdout
+            return True, ""
+        except Exception as e:
+            logging.error(f"Failed to run static analysis: {e}")
+            return True, "" # Don't block execution if flake8 fails to run
 
     def _search_error(self, error_message):
         logging.info("Searching DuckDuckGo for error solution...")
@@ -62,6 +76,20 @@ class SandboxTester:
                  isolated_script_path = os.path.join(sandbox_tmp_dir, os.path.basename(code_path))
                  shutil.copy2(abs_code_path, isolated_script_path)
 
+                 # Step 1: Static Analysis
+                 is_valid, static_errors = self._static_analysis(isolated_script_path)
+                 if not is_valid and "SyntaxError" in static_errors:
+                      raise Exception(f"Static Analysis Failed:\n{static_errors}")
+
+                 # Step 2: Test Execution inside bwrap
+                 # If unit tests are included in the generated script, we can run pytest on it
+                 # If not, we just run the script with python. The prompt now asks for unittest block.
+
+                 # We will default to running pytest on the file, which will also execute the code
+                 # if it's structured properly, or we can just run python.
+                 # To ensure both script logic and unit tests are hit, we run pytest on the script.
+                 pytest_exe = os.path.join(os.path.abspath(self.venv_dir), "bin", "pytest")
+
                  bwrap_cmd = [
                      "bwrap",
                      "--ro-bind", "/usr", "/usr",
@@ -77,7 +105,7 @@ class SandboxTester:
                      "--die-with-parent",
                      "--setenv", "PATH", "/usr/bin:/bin",
                      "--chdir", sandbox_tmp_dir,
-                     python_exe, isolated_script_path
+                     pytest_exe, isolated_script_path, "-v" # Run tests and the script
                  ]
 
                  try:
