@@ -128,12 +128,12 @@ def run_workflow():
                 if not jobs:
                     raise Exception("No jobs found. Aborting cycle.")
 
-                for job in jobs:
-                    is_auto, reason = freelance.filter_job(job)
-                    if is_auto:
-                        job_data = job
-                        logging.info(f"Selected Job: {job['title']}")
-                        break
+                # Use batch filtering to save API quota
+                autonomous_jobs = freelance.filter_jobs_batch(jobs)
+
+                if autonomous_jobs:
+                    job_data = autonomous_jobs[0] # Select the first viable autonomous job
+                    logging.info(f"Selected Job: {job_data['title']}")
 
             gc.collect()
 

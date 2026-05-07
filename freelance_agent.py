@@ -90,44 +90,55 @@ class FreelanceAgent:
             logging.error(f"Failed to scrape jobs: {e}")
             return jobs
 
-    def filter_job(self, job_data):
-        logging.info(f"Filtering job: {job_data.get('title')}")
+    def filter_jobs_batch(self, jobs_list):
+        """Batch evaluate multiple jobs using a single LLM API call to save RPD quota."""
+        logging.info(f"Batch filtering {len(jobs_list)} jobs...")
 
         # 1. Deterministic Negative Keyword Filter
         negative_keywords = ["zoom", "meeting", "hardware", "ios", "c#", "video call", "logo", "design"]
-        text_to_check = (job_data.get('title', '') + " " + job_data.get('description', '')).lower()
-        for kw in negative_keywords:
-            if kw in text_to_check:
-                logging.info(f"Job rejected deterministically due to negative keyword: {kw}")
-                return False, "Contains negative keyword"
+        candidates = []
+        for job in jobs_list:
+            text_to_check = (job.get('title', '') + " " + job.get('description', '')).lower()
+            if not any(kw in text_to_check for kw in negative_keywords):
+                candidates.append(job)
+            else:
+                logging.info(f"Job '{job.get('title')}' rejected by keyword filter.")
 
-        # 2. LLM Autonomy Filter (Thinking Mode)
+        if not candidates:
+            return []
+
+        # 2. LLM Autonomy Filter (Batch Mode)
         prompt = (
-            "Analyze the following freelance job description. Determine if it can be 100% completed "
-            "autonomously by an AI agent restricted to writing Python code, web scraping, and API integrations. "
-            "It CANNOT do video calls, subjective design, hardware tasks, or GUI interactions outside Playwright. "
-            "Return a JSON object with 'is_autonomous': true/false and 'reason': string.\n\n"
-            f"Title: {job_data.get('title')}\nDescription: {job_data.get('description')}"
+            "You are an AI filtering system. You must analyze the following list of freelance jobs. "
+            "Determine if each job can be 100% completed autonomously by an AI agent restricted to writing Python code, web scraping, and API integrations. "
+            "The AI CANNOT do video calls, subjective design, hardware tasks, or GUI interactions outside Playwright.\n\n"
+            "Respond ONLY with a JSON array of objects, where each object corresponds to a job by index, containing: "
+            "{'index': int, 'is_autonomous': true/false, 'reason': string}.\n\n"
         )
 
-        response = self.llm.generate_content(prompt)
+        for i, job in enumerate(candidates):
+            prompt += f"Job {i}:\nTitle: {job.get('title')}\nDescription: {job.get('description')}\n---\n"
+
+        response = self.llm.generate_content(prompt, require_json=True)
+        approved_jobs = []
         if response:
             try:
-                # Handle potential markdown wrapping
                 if "```json" in response:
                     response = response.split("```json")[1].split("```")[0].strip()
                 elif "```" in response:
                     response = response.split("```")[1].strip()
 
-                parsed = json.loads(response)
-                is_auto = parsed.get("is_autonomous", False)
-                reason = parsed.get("reason", "No reason provided")
-                logging.info(f"LLM Filter Result: {is_auto} ({reason})")
-                return is_auto, reason
+                evaluations = json.loads(response)
+                for eval_obj in evaluations:
+                    if eval_obj.get("is_autonomous"):
+                        idx = eval_obj.get("index")
+                        if 0 <= idx < len(candidates):
+                            approved_jobs.append(candidates[idx])
+                            logging.info(f"LLM Approved Job: {candidates[idx].get('title')} - Reason: {eval_obj.get('reason')}")
             except Exception as e:
-                logging.error(f"Failed to parse LLM filter response: {e}\nResponse: {response}")
+                logging.error(f"Failed to parse batched LLM filter response: {e}\nResponse: {response}")
 
-        return False, "LLM filter failed"
+        return approved_jobs
 
     def submit_proposal(self, job_data, branding_context=None, script_path=None):
         logging.info(f"Submitting proposal for: {job_data.get('title')}")
@@ -145,16 +156,28 @@ class FreelanceAgent:
                     logging.warning(f"Failed to click Apply Now: {click_e}")
                     return False
 
-                # Personalize cover letter using branding context if available
-                base_intro = "Hello, I am a backend specialist specializing in Python automation."
-                if branding_context and "persona" in branding_context:
-                     base_intro = f"Hello, I am a {branding_context['persona']} specializing in Python."
-
-                cover_letter = (
-                    f"{base_intro} "
-                    "I have analyzed your requirements and can deliver a robust, headless automation script "
-                    "to solve this issue efficiently. I am available to start immediately."
+                # Generate dynamic cover letter via LLM
+                logging.info("Generating dynamic cover letter via LLM...")
+                persona = branding_context.get("persona", "Backend Python Specialist") if branding_context else "Python Developer"
+                prompt = (
+                    f"Write a highly professional and tailored Upwork cover letter for the following job.\n"
+                    f"Job Title: {job_data.get('title')}\n"
+                    f"Job Description: {job_data.get('description')}\n\n"
+                    f"My Persona: {persona}.\n"
+                    "Requirements: Keep it under 150 words. Do not use generic placeholders like [Your Name]. "
+                    "Directly address the core problem in the description and state that I have a robust, automated Python solution ready. "
+                    "End with a question to prompt a reply."
                 )
+
+                cover_letter = self.llm.generate_content(prompt)
+                if not cover_letter:
+                     logging.warning("LLM failed to generate cover letter. Using fallback.")
+                     cover_letter = (
+                         f"Hello, I am a {persona}. "
+                         "I have analyzed your requirements and can deliver a robust, headless automation script "
+                         "to solve this issue efficiently. I am available to start immediately."
+                     )
+
                 try:
                     cover_letter_input = page.locator("textarea[aria-labelledby='cover_letter_label']").first
                     if cover_letter_input.is_visible():
