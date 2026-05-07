@@ -98,13 +98,12 @@ def run_workflow():
         except Exception as e:
             logging.warning(f"Cleanup failed: {e}")
 
-        if current_step in ["init", "freelance_job_hunt_phase"]:
-            # Step 1: Freelance Job Hunting & Filtering
+        if current_step in ["init", "inbox_monitor_phase"]:
+            # Step 0: Check Messages and Negotiate before hunting new jobs
             wait_for_resources()
-            save_state(task_id, "RUNNING", "freelance_job_hunt_phase", {})
-            brand_context = branding.get_branding_strategy("upwork")
+            save_state(task_id, "RUNNING", "inbox_monitor_phase", {})
 
-            # Explicitly manage Hybrid Browser Mode for login phase
+            # Login once, pass the session forward
             login_browser_mode = True
             with BrowserAgent(headless=login_browser_mode) as browser:
                 freelance = FreelanceAgent(browser, llm)
@@ -120,6 +119,23 @@ def run_workflow():
                     login_success = freelance.login_upwork()
                     if not login_success:
                         raise Exception("Failed to login to Upwork even after headed manual intervention attempt.")
+
+            with BrowserAgent(headless=True) as browser:
+                freelance = FreelanceAgent(browser, llm)
+
+                # Check inbox for active negotiations
+                negotiations = freelance.check_messages_and_negotiate()
+                if negotiations > 0:
+                     logging.info(f"Handled {negotiations} message(s). Proceeding to job hunt.")
+                     telegram.send_message(f"Auto-Negotiation complete. Replied to {negotiations} client message(s).")
+
+            current_step = "freelance_job_hunt_phase"
+
+        if current_step == "freelance_job_hunt_phase":
+            # Step 1: Freelance Job Hunting & Filtering
+            wait_for_resources()
+            save_state(task_id, "RUNNING", "freelance_job_hunt_phase", {})
+            brand_context = branding.get_branding_strategy("upwork")
 
             with BrowserAgent(headless=True) as browser:
                 freelance = FreelanceAgent(browser, llm)
@@ -160,8 +176,8 @@ def run_workflow():
                 "Output ONLY valid Python code. Do not wrap in markdown or explain."
             )
 
-            logging.info("Generating code via Gemini API...")
-            generated_code = llm.generate_content(prompt)
+            logging.info("Generating code via Gemini API with web search capabilities...")
+            generated_code = llm.generate_content(prompt, allow_search=True)
             if not generated_code:
                 raise Exception("LLM API failed to generate code.")
 

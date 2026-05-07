@@ -66,13 +66,25 @@ class FreelanceAgent:
             self.browser.navigate("https://www.upwork.com/nx/search/jobs/?q=python%20web%20scraping&sort=recency")
             page.wait_for_timeout(5000)
 
-            # Try to grab job titles and descriptions - Use fallback locators for lists
-            job_cards = page.locator("section[data-ev-label='search_results_impression'], article.job-tile, div.job-tile").all()
+            # Try to grab job titles and descriptions - Use semantic role-based locators to resist UI changes
+            # Upwork job cards are typically <article> elements, and the titles are usually heading links
+            job_cards = page.get_by_role("article").all()
+            if not job_cards:
+                # Fallback if the semantic role isn't explicitly defined
+                job_cards = page.locator("section[data-ev-label='search_results_impression'], div.job-tile").all()
+
             for card in job_cards[:5]:
                 try:
-                    title = card.locator("h2, h3, a.up-n-link").first.inner_text()
+                    # Semantic locators for title and description
+                    title_elem = card.get_by_role("heading").first
+                    if not title_elem.is_visible():
+                        title_elem = card.locator("h2, h3, a.up-n-link").first
+                    title = title_elem.inner_text()
+
                     description = card.locator("div[data-test='job-description-text'], span[data-test='job-description-text'], div.job-description").first.inner_text()
-                    url = card.locator("a").first.get_attribute("href")
+
+                    link_elem = card.get_by_role("link").first
+                    url = link_elem.get_attribute("href")
                     if url and not url.startswith("http"):
                         url = "https://www.upwork.com" + url
 
@@ -148,9 +160,14 @@ class FreelanceAgent:
                 self.browser.navigate(job_data.get("url"))
                 page.wait_for_timeout(3000)
 
-                # Check for Apply Now button with human-click
+                # Semantic check for Apply Now button
                 try:
-                    self.browser.human_click("button:has-text('Apply Now'), a:has-text('Apply Now')")
+                    apply_btn = page.get_by_role("button", name="Apply Now")
+                    if not apply_btn.is_visible():
+                        # Fallback
+                        apply_btn = page.locator("button:has-text('Apply Now'), a:has-text('Apply Now')").first
+
+                    self.browser.human_click(apply_btn)
                     page.wait_for_timeout(5000)
                 except Exception as click_e:
                     logging.warning(f"Failed to click Apply Now: {click_e}")
@@ -179,7 +196,11 @@ class FreelanceAgent:
                      )
 
                 try:
-                    cover_letter_input = page.locator("textarea[aria-labelledby='cover_letter_label']").first
+                    # Semantic locator for the cover letter textbox
+                    cover_letter_input = page.get_by_role("textbox", name="Cover Letter")
+                    if not cover_letter_input.is_visible():
+                        cover_letter_input = page.locator("textarea[aria-labelledby='cover_letter_label']").first
+
                     if cover_letter_input.is_visible():
                         self.browser.human_type(cover_letter_input, cover_letter)
                 except Exception as e:
@@ -187,7 +208,10 @@ class FreelanceAgent:
 
                 # Submit via human click
                 try:
-                    self.browser.human_click("button:has-text('Send for')")
+                    submit_btn = page.get_by_role("button", name="Send for")
+                    if not submit_btn.is_visible():
+                        submit_btn = page.locator("button:has-text('Send for')").first
+                    self.browser.human_click(submit_btn)
                     logging.info("Proposal submitted successfully.")
                     return True
                 except Exception as e:
@@ -196,6 +220,68 @@ class FreelanceAgent:
         except Exception as e:
             logging.error(f"Error submitting proposal: {e}")
             return False
+
+    def check_messages_and_negotiate(self):
+        """Monitors Upwork inbox, reads new messages, and uses LLM to reply and negotiate."""
+        logging.info("Checking Upwork messages for auto-negotiation...")
+        negotiations_handled = 0
+        try:
+            page = self.browser.page
+            self.browser.navigate("https://www.upwork.com/nx/messages/")
+            page.wait_for_timeout(5000)
+
+            # Find all message rooms with unread indicators or just the recent ones
+            rooms = page.locator("div[data-test='message-room-list-item']").all()
+            for room in rooms[:3]: # Limit to top 3 recent conversations
+                try:
+                    # Semantic click on room
+                    room.click()
+                    page.wait_for_timeout(3000)
+
+                    # Extract recent messages
+                    messages = page.locator("div[data-test='message-item'], div.message-content").all()
+                    if not messages:
+                         continue
+
+                    # Get the last few messages to build context
+                    chat_history = []
+                    for msg in messages[-5:]:
+                        chat_history.append(msg.inner_text())
+
+                    if not chat_history:
+                        continue
+
+                    # Check if the last message requires a reply (e.g., if it's from the client, not us)
+                    # For simplicity in this structure, we assume we ask the LLM if a reply is needed.
+                    chat_text = "\n".join(chat_history)
+                    prompt = (
+                        "You are an autonomous freelance AI agent. Analyze the following recent chat history with a client on Upwork.\n"
+                        f"Chat History:\n{chat_text}\n\n"
+                        "Determine if you need to reply. If the client is asking a question, proposing a contract, or negotiating, "
+                        "generate a professional, concise reply to secure the contract or clarify technical details. "
+                        "If no reply is needed (e.g., you sent the last message, or the conversation is closed), return 'NO_REPLY_NEEDED'.\n"
+                        "Only return the exact reply text or 'NO_REPLY_NEEDED'."
+                    )
+
+                    reply_text = self.llm.generate_content(prompt)
+
+                    if reply_text and "NO_REPLY_NEEDED" not in reply_text:
+                        logging.info("LLM generated a negotiation reply. Sending...")
+                        msg_input = page.locator("div[contenteditable='true'], textarea").last
+                        self.browser.human_type(msg_input, reply_text)
+
+                        # Click send
+                        self.browser.human_click("button[aria-label='Send message'], button:has-text('Send')")
+                        page.wait_for_timeout(2000)
+                        negotiations_handled += 1
+
+                except Exception as room_err:
+                    logging.warning(f"Error handling a specific message room: {room_err}")
+
+        except Exception as e:
+            logging.error(f"Failed to check messages: {e}")
+
+        return negotiations_handled
 
     def deliver_work(self, job_data, file_path):
         """Delivers the final product to the client via the platform's messaging/delivery system natively."""

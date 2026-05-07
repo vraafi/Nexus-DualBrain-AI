@@ -76,10 +76,8 @@ class BrowserAgent:
             self._human_delay(500, 1000) # Pause before typing
 
             # Use press_sequentially which is safer for rich text editors than page.keyboard.type
-            # We calculate a random delay for each character natively via playwright
-            # Playwright supports a static delay, but we'll loop to randomize
-            for char in text:
-                locator.press_sequentially(char, delay=int(random.uniform(50, 150)))
+            # We pass the entire string so the delay is applied between characters natively.
+            locator.press_sequentially(text, delay=100) # 100ms delay between characters
         except Exception as e:
             logging.error(f"Failed during human_type: {e}")
             # Fallback to standard fill if typing fails entirely
