@@ -100,7 +100,9 @@ class FreelanceOrchestrator:
             while True:
                 wait_until_active()
                 platform = ROTATION_ORDER[self._platform_idx]
-                self._run_platform_slot(platform)
+                job_data = self._run_platform_slot(platform)
+                if job_data:
+                    return job_data
                 self._platform_idx = (self._platform_idx + 1) % len(ROTATION_ORDER)
         except KeyboardInterrupt:
             logger.info("[Orchestrator] Dihentikan oleh user.")
@@ -136,7 +138,12 @@ class FreelanceOrchestrator:
                 continue
 
             if self.email_monitor.has_priority_orders():
-                self._handle_priority_orders(platform, interrupt_event, search_thread)
+                job_data = self._handle_priority_orders(platform, interrupt_event, search_thread)
+                if job_data:
+                    interrupt_event.set()
+                    search_thread.join(timeout=30)
+                    return job_data
+
                 remaining = max(0, slot_end - time.time())
                 if remaining > 120:
                     logger.info("[Orchestrator] Resume slot %s — sisa %.1f menit.",
@@ -147,6 +154,7 @@ class FreelanceOrchestrator:
         interrupt_event.set()
         search_thread.join(timeout=30)
         logger.info("[Orchestrator] ✅ Slot %s selesai.", platform.upper())
+        return None
 
     def _start_search_thread(self, platform: str, duration: float, interrupt_event: threading.Event) -> threading.Thread:
         t = threading.Thread(
@@ -234,6 +242,8 @@ class FreelanceOrchestrator:
         interrupt_event.set()
         search_thread.join(timeout=30)
 
+        job_data_to_return = None
+
         while self.email_monitor.has_priority_orders():
             order = self.email_monitor.pop_next_order()
             if not order:
@@ -245,11 +255,14 @@ class FreelanceOrchestrator:
             try:
                 # PERBAIKAN #4: Lock saat handle pesanan (akses browser)
                 with self._browser_lock:
-                    self._process_order(order)
+                    job_data = self._process_order(order)
+                    if job_data and not job_data_to_return:
+                        job_data_to_return = job_data
             except Exception as exc:
                 logger.error("[Orchestrator] Gagal handle pesanan %s: %s", order.order_id, exc)
 
         logger.info("[Orchestrator] ✅ Semua pesanan email selesai.")
+        return job_data_to_return
 
     def _process_order(self, order: IncomingOrder):
         prompt = (
@@ -283,6 +296,14 @@ class FreelanceOrchestrator:
 
         self.finance.log_proposal(order.platform, order.subject, expected_revenue=75.0)
         logger.info("[Orchestrator] Pesanan %s dari %s selesai diproses.", order.order_id, order.platform)
+
+        return {
+            "title": order.subject,
+            "description": order.description,
+            "platform": order.platform,
+            "order_id": order.order_id,
+            "url": ""
+        }
 
     def _login_platform(self, platform: str):
         try:

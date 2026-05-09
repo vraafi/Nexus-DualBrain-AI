@@ -135,8 +135,8 @@ def run_inbox_phase(llm, telegram, task_id: str) -> tuple[str, dict | None]:
         telegram.send_message(f"🔄 Revisi diminta: {job_data['title']}. Regenerating code...")
         return "code_generation_phase", job_data
     elif state == "CONTRACT_ACCEPTED":
-        telegram.send_message("🎉 Kontrak diterima! Menuju delivery.")
-        return "delivery_phase", job_data
+        telegram.send_message("🎉 Kontrak diterima! Menuju code generation.")
+        return "code_generation_phase", job_data
     elif state == "REPLY_ONLY":
         telegram.send_message("💬 Reply negosiasi terkirim.")
 
@@ -151,7 +151,7 @@ def run_freelance_phase(llm, branding_strategies: dict, task_id: str):
     """
     Loop utama 18/7: rotasi Upwork → Fiverr → Toptal.
     EmailMonitor berjalan di background — interupsi otomatis jika ada pesanan.
-    Blocking — tidak akan return kecuali ada exception.
+    Blocking — tidak akan return kecuali ada exception atau pesanan prioritas masuk.
     """
     wait_for_resources()
     save_state(task_id, "RUNNING", "freelance_phase", {})
@@ -163,9 +163,10 @@ def run_freelance_phase(llm, branding_strategies: dict, task_id: str):
             llm_client=llm,
             branding_strategies=branding_strategies,
         )
-        orchestrator.start()  # Blocking 18/7
+        job_data = orchestrator.start()  # Blocking 18/7 atau return job_data jika diinterupsi
 
     gc.collect()
+    return job_data
 
 
 # ─────────────────────────────────────────────
@@ -248,21 +249,35 @@ def run_proposal_and_delivery_phase(llm, telegram, job_data: dict,
                                     code_path: str, finance: FinancialTracker,
                                     task_id: str):
     """Submit proposal, tunggu kontrak, deliver hasil kerja."""
+    from fiverr_agent import FiverrAgent
+    from toptal_agent import ToptalAgent
+
     wait_for_resources()
+    platform = job_data.get("platform", "upwork")
     branding = FreelanceBranding()
-    brand_ctx = branding.get_branding_strategy("upwork")
+    brand_ctx = branding.get_branding_strategy(platform)
 
     # Submit proposal
     save_state(task_id, "RUNNING", "proposal_phase", {"job_data": job_data})
-    finance.log_proposal("upwork", job_data.get("title", "Unknown"), expected_revenue=50.0)
+    finance.log_proposal(platform, job_data.get("title", "Unknown"), expected_revenue=50.0)
 
     with BrowserAgent(headless=True) as browser:
-        agent = FreelanceAgent(browser, llm)
-        proposal_ok = agent.submit_proposal(job_data, brand_ctx, code_path)
+        if platform == "upwork":
+            agent = FreelanceAgent(browser, llm)
+            proposal_ok = agent.submit_proposal(job_data, brand_ctx, code_path)
+        elif platform == "fiverr":
+            agent = FiverrAgent(browser, llm)
+            # Di Fiverr, kita biasanya reply message saja atau deliver langsung
+            proposal_ok = True
+        elif platform == "toptal":
+            agent = ToptalAgent(browser, llm)
+            proposal_ok = agent.apply_to_job(job_data, brand_ctx)
+        else:
+            proposal_ok = False
         gc.collect()
 
     if not proposal_ok:
-        telegram.send_message("❌ Gagal submit proposal.")
+        telegram.send_message(f"❌ Gagal submit proposal di {platform}.")
         raise Exception("Proposal submission failed.")
 
     telegram.send_message(f"✅ Proposal terkirim: {job_data.get('title')}")
@@ -270,8 +285,18 @@ def run_proposal_and_delivery_phase(llm, telegram, job_data: dict,
     # Delivery
     save_state(task_id, "RUNNING", "delivery_phase", {"job_data": job_data})
     with BrowserAgent(headless=True) as browser:
-        agent = FreelanceAgent(browser, llm)
-        delivered = agent.deliver_work(job_data, code_path)
+        if platform == "upwork":
+            agent = FreelanceAgent(browser, llm)
+            delivered = agent.deliver_work(job_data, code_path)
+        elif platform == "fiverr":
+            agent = FiverrAgent(browser, llm)
+            delivery_msg = "Here is the completed code. Let me know if you need any changes."
+            delivered = agent.deliver_order(job_data, code_path, delivery_msg)
+        elif platform == "toptal":
+            agent = ToptalAgent(browser, llm)
+            delivered = agent.deliver_work(job_data, code_path)
+        else:
+            delivered = False
         gc.collect()
 
     if delivered:
@@ -314,9 +339,12 @@ def run_workflow():
 
         # ── Step 1: Freelance 18/7 loop ──────────────
         if current_step == "freelance_phase":
-            # Loop ini blocking — tidak akan lanjut ke step berikutnya kecuali crash
-            run_freelance_phase(llm, branding_strategies, task_id)
-            return SLEEP_DURATION_SHORT  # Jika entah bagaimana keluar dari loop
+            # Loop ini blocking — tidak akan lanjut ke step berikutnya kecuali crash atau prioritas
+            job_data = run_freelance_phase(llm, branding_strategies, task_id)
+            if job_data:
+                current_step = "code_generation_phase"
+            else:
+                return SLEEP_DURATION_SHORT  # Jika entah bagaimana keluar dari loop tanpa job
 
         # ── Step 2: Code generation ──────────────────
         if current_step == "code_generation_phase":
