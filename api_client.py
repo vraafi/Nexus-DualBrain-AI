@@ -2,13 +2,17 @@ import requests
 import json
 import logging
 import os
+import time
 from duckduckgo_search import DDGS
+from llm_config import LLM_MODELS, DEFAULT_LLM_MODEL
 
 class GeminiClient:
     def __init__(self, api_keys):
         self.api_keys = api_keys
         self.current_key_idx = 0
-        self.base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent"
+        self.model_name = DEFAULT_LLM_MODEL
+        self.model_config = LLM_MODELS[self.model_name]
+        self.base_url = self.model_config["base_url"]
 
     def _get_current_key(self):
         return self.api_keys[self.current_key_idx]
@@ -47,10 +51,13 @@ class GeminiClient:
         return self._make_api_call(full_prompt, require_json)
 
     def _make_api_call(self, full_prompt, require_json=False, use_thinking=True):
-        for _ in range(len(self.api_keys)): # Try all keys before failing
+        for attempt in range(self.model_config["max_retries"]): # Try multiple times with exponential backoff
             key = self._get_current_key()
             url = f"{self.base_url}?key={key}"
-            headers = {'Content-Type': 'application/json'}
+            headers = {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': key # For OpenAI-compatible APIs
+            }
             data = {
                 "contents": [{"parts": [{"text": full_prompt}]}]
             }
@@ -66,23 +73,24 @@ class GeminiClient:
                 data["generationConfig"] = generation_config
 
             try:
-                # Set a 60-second timeout for heavy LLM generations, especially on 'high' thinking budget
-                response = requests.post(url, headers=headers, data=json.dumps(data), timeout=60)
+                response = requests.post(url, headers=headers, data=json.dumps(data), timeout=self.model_config["timeout"])
                 if response.status_code == 200:
-                    text_response = response.json()['candidates'][0]['content']['parts'][0]['text']
-
-                    # Log the thinking process if available, but return the final structured answer
-                    # Assuming Gemma with thinkingConfig might return tags or separated content,
-                    # but typically the 'text' field contains the final structured output when responseMimeType is json.
+                    text_response = response.json()["candidates"][0]["content"]["parts"][0]["text"]
                     return text_response
                 elif response.status_code == 429: # Rate limit exceeded
-                    logging.warning("Rate limit exceeded for current key. Rotating...")
+                    logging.warning(f"Rate limit exceeded for current key. Retrying in {self.model_config['rate_limit_delay']} seconds...")
+                    time.sleep(self.model_config["rate_limit_delay"])
+                    self._rotate_key()
+                elif response.status_code >= 500: # Server errors
+                    logging.warning(f"Server error {response.status_code}. Retrying in {2 ** attempt} seconds...")
+                    time.sleep(2 ** attempt)
                     self._rotate_key()
                 else:
                     logging.error(f"API Error {response.status_code}: {response.text}")
                     return None
-            except Exception as e:
-                 logging.error(f"Request failed: {e}")
+            except requests.exceptions.RequestException as e:
+                 logging.error(f"Request failed: {e}. Retrying in {2 ** attempt} seconds...")
+                 time.sleep(2 ** attempt)
                  self._rotate_key()
 
         logging.error("All API keys failed or rate-limited.")
