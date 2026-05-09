@@ -1,10 +1,10 @@
 """
 freelance_orchestrator.py
 =========================
-Koordinator utama untuk 3 platform freelance: Upwork, Fiverr, Toptal.
+Koordinator utama untuk 3 platform freelance: Upwork, Fiverr, Freelancer.
 
 Logika:
-  - Rotasi platform: Upwork (7 jam) → Fiverr (6 jam) → Toptal (5 jam)
+  - Rotasi platform: Upwork (7 jam) → Fiverr (6 jam) → Freelancer (5 jam)
   - EmailMonitor berjalan di background — cek inbox setiap 5 menit
   - Jika ada pesanan masuk dari platform MANAPUN, interupsi slot saat ini
     dan tangani pesanan terlebih dahulu, lalu lanjut sisa slot
@@ -27,7 +27,7 @@ from typing import Optional
 from email_monitor import EmailMonitor, IncomingOrder
 from freelance_agent import FreelanceAgent
 from fiverr_agent import FiverrAgent
-from toptal_agent import ToptalAgent
+from freelancer_agent import FreelancerAgent
 from financial_tracker import FinancialTracker
 
 logger = logging.getLogger(__name__)
@@ -40,10 +40,10 @@ REST_END_WIB   = 17
 PLATFORM_SLOTS = {
     "upwork": 7 * 3600,
     "fiverr": 6 * 3600,
-    "toptal": 5 * 3600,
+    "freelancer": 5 * 3600,
 }
 
-ROTATION_ORDER = ["upwork", "fiverr", "toptal"]
+ROTATION_ORDER = ["upwork", "fiverr", "freelancer"]
 EMAIL_POLL_INTERVAL = int(os.environ.get("EMAIL_CHECK_INTERVAL", 300))
 
 
@@ -83,7 +83,7 @@ class FreelanceOrchestrator:
 
         self._upwork_agent = FreelanceAgent(browser_agent, llm_client)
         self._fiverr_agent = FiverrAgent(browser_agent, llm_client)
-        self._toptal_agent = ToptalAgent(browser_agent, llm_client)
+        self._freelancer_agent = FreelancerAgent(browser_agent, llm_client)
 
         self.email_monitor = EmailMonitor()
         self._platform_idx = 0
@@ -201,18 +201,18 @@ class FreelanceOrchestrator:
                     with self._browser_lock:
                         self._fiverr_agent.search_and_offer_gigs()
 
-                elif platform == "toptal":
+                elif platform == "freelancer":
                     with self._browser_lock:
-                        jobs = self._toptal_agent.check_job_matches()
-                        filtered = self._toptal_agent.filter_autonomous_jobs(jobs)
+                        jobs = self._freelancer_agent.check_job_matches()
+                        filtered = self._freelancer_agent.filter_autonomous_jobs(jobs)
                     for job in filtered[:2]:
                         if stop.is_set():
                             break
                         with self._browser_lock:
-                            success = self._toptal_agent.apply_to_job(job, branding)
+                            success = self._freelancer_agent.apply_to_job(job, branding)
                         if success:
                             applied += 1
-                            self.finance.log_proposal("toptal", job.get("title"), 150.0)
+                            self.finance.log_proposal("freelancer", job.get("title"), 150.0)
                         time.sleep(45)
 
                 # Jeda 10 menit antar siklus pencarian
@@ -291,8 +291,8 @@ class FreelanceOrchestrator:
             if reply:
                 self._fiverr_agent.reply_to_buyer(fake_order, reply)
 
-        elif order.platform == "toptal":
-            logger.info("[Toptal] Pesanan aktif: %s — siapkan kode.", order.subject)
+        elif order.platform == "freelancer":
+            logger.info("[Freelancer] Pesanan aktif: %s — siapkan kode.", order.subject)
 
         self.finance.log_proposal(order.platform, order.subject, expected_revenue=75.0)
         logger.info("[Orchestrator] Pesanan %s dari %s selesai diproses.", order.order_id, order.platform)
@@ -312,8 +312,8 @@ class FreelanceOrchestrator:
                     success = self._upwork_agent.login_upwork()
                 elif platform == "fiverr":
                     success = self._fiverr_agent.login_fiverr()
-                elif platform == "toptal":
-                    success = self._toptal_agent.login_toptal()
+                elif platform == "freelancer":
+                    success = self._freelancer_agent.login_freelancer()
                 else:
                     success = False
 

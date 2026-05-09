@@ -2,7 +2,7 @@ import logging
 
 class FreelanceBranding:
     def __init__(self):
-        self.platforms = ["upwork", "fiverr", "toptal"]
+        self.platforms = ["upwork", "fiverr", "freelancer"]
 
     def get_branding_strategy(self, platform):
         logging.info(f"Retrieving branding strategy for {platform}...")
@@ -23,8 +23,8 @@ class FreelanceBranding:
                  "pricing": "Clear Tiered Pricing (e.g., Basic = Fix 1 Bug).",
                  "golden_rule": "Smile, clear background, good lighting for profile picture."
             },
-            "toptal": {
-                 "persona": "Elite & Senior Engineer (Top 3%)",
+            "freelancer": {
+                 "persona": "Professional Freelancer & Senior Engineer",
                  "communication": "Business Acumen - explain choices based on cost/efficiency, act as Technical Consultant.",
                  "code_quality": "Strict adherence to SOLID principles, Design Patterns, and Unit Testing.",
                  "english": "Fluent professional English.",

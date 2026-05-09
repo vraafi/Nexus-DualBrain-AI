@@ -1,9 +1,9 @@
 """
-toptal_agent.py
-===============
-Agent untuk platform Toptal.
-Toptal berbeda dari Upwork/Fiverr — ini platform elite (Top 3%).
-Flow: Toptal mengirimkan job matches via email/dashboard → kita apply → interview → contract.
+freelancer_agent.py
+===================
+Agent untuk platform Freelancer.com.
+Freelancer.com adalah salah satu platform freelance terbesar di dunia.
+Flow: Freelancer mengirimkan job matches via email/dashboard → kita apply → chat/bid → contract.
 Agent ini fokus pada: cek job matches, kirim application, dan manage active engagements.
 """
 
@@ -14,22 +14,22 @@ import time
 logger = logging.getLogger(__name__)
 
 
-class ToptalAgent:
+class FreelancerAgent:
     def __init__(self, browser_agent, llm_client):
         self.browser = browser_agent
         self.llm = llm_client
 
-    def login_toptal(self) -> bool:
-        """Login ke Toptal menggunakan credential dari IdentityManager."""
+    def login_freelancer(self) -> bool:
+        """Login ke Freelancer menggunakan credential dari IdentityManager."""
         from identity_manager import IdentityManager
         identity = IdentityManager()
-        creds = identity.get_credential("toptal")
+        creds = identity.get_credential("freelancer")
         if not creds:
-            logger.error("[Toptal] Tidak ada credential Toptal di vault.")
+            logger.error("[Freelancer] Tidak ada credential Freelancer di vault.")
             return False
 
         try:
-            self.browser.navigate("https://www.toptal.com/login")
+            self.browser.navigate("https://www.freelancer.com/login")
             page = self.browser.page
             page.wait_for_timeout(3000)
 
@@ -43,66 +43,71 @@ class ToptalAgent:
             page.wait_for_timeout(6000)
 
             if "login" in page.url or "sign_in" in page.url:
-                logger.warning("[Toptal] Login gagal atau perlu manual intervention.")
-                page.wait_for_timeout(20000)  # Toptal kadang butuh waktu lebih
+                logger.warning("[Freelancer] Login gagal atau perlu manual intervention.")
+                page.wait_for_timeout(20000)  # Freelancer kadang butuh waktu lebih
                 if "login" in page.url or "sign_in" in page.url:
                     return False
 
-            logger.info("[Toptal] Login berhasil.")
+            logger.info("[Freelancer] Login berhasil.")
             return True
 
         except Exception as exc:
-            logger.error("[Toptal] Login error: %s", exc)
+            logger.error("[Freelancer] Login error: %s", exc)
             return False
 
     def check_job_matches(self) -> list[dict]:
         """
-        Cek Job Matches yang dikirimkan Toptal ke freelancer.
-        Toptal menyajikan job yang cocok dengan skill profile kita.
+        Cek Job Matches yang dikirimkan Freelancer ke freelancer.
+        Freelancer menyajikan job yang cocok dengan skill profile kita.
         Return list of dict: {job_id, title, description, rate, duration, url}
         """
         jobs = []
         try:
-            self.browser.navigate("https://www.toptal.com/freelancers#jobs")
+            self.browser.navigate("https://www.freelancer.com/jobs")
             page = self.browser.page
             page.wait_for_timeout(5000)
 
             job_cards = page.locator(
-                "div[class*='job-card'], article[class*='job'], div[data-testid*='job']"
+                "div[class*='JobSearchCard'], div[class*='job-card'], article[class*='job']"
             ).all()
 
             for card in job_cards[:5]:
                 try:
-                    title_elem = card.locator("h2, h3, span[class*='title']").first
+                    title_elem = card.locator("a[class*='JobSearchCard-primary-heading-link']").first
+                    if not title_elem.is_visible():
+                        title_elem = card.locator("h2, h3, span[class*='title']").first
+                    
                     title = title_elem.inner_text() if title_elem.is_visible() else "Untitled"
 
-                    desc_elem = card.locator("p[class*='description'], div[class*='description']").first
+                    desc_elem = card.locator("p[class*='JobSearchCard-primary-description']").first
+                    if not desc_elem.is_visible():
+                        desc_elem = card.locator("p[class*='description'], div[class*='description']").first
                     description = desc_elem.inner_text() if desc_elem.is_visible() else ""
 
-                    rate_elem = card.locator("span[class*='rate'], div[class*='compensation']").first
+                    rate_elem = card.locator("div[class*='JobSearchCard-primary-price']").first
                     rate = rate_elem.inner_text() if rate_elem.is_visible() else "TBD"
 
                     link_elem = card.locator("a").first
                     url = link_elem.get_attribute("href") or ""
                     if url and not url.startswith("http"):
-                        url = "https://www.toptal.com" + url
+                        url = "https://www.freelancer.com" + url
 
                     jobs.append({
-                        "job_id": url.split("/")[-1] if url else f"toptal_job_{len(jobs)}",
+                        "job_id": url.split("/")[-1] if url else f"freelancer_job_{len(jobs)}",
                         "title": title,
                         "description": description,
                         "rate": rate,
                         "url": url,
-                        "platform": "toptal"
+                        "platform": "freelancer"
                     })
                 except Exception as card_err:
-                    logger.warning("[Toptal] Gagal parse job card: %s", card_err)
+                    logger.warning("[Freelancer] Gagal parse job card: %s", card_err)
 
-            logger.info("[Toptal] Ditemukan %d job matches.", len(jobs))
+            logger.info("[Freelancer] Ditemukan %d job matches.", len(jobs))
             return jobs
 
         except Exception as exc:
-            logger.error("[Toptal] Gagal cek job matches: %s", exc)
+            logger.error("[Freelancer] Gagal cek job matches: %s", exc)
             return []
 
     def filter_autonomous_jobs(self, jobs: list[dict]) -> list[dict]:
@@ -139,16 +144,15 @@ class ToptalAgent:
                 for ev in evaluations:
                     if ev.get("is_autonomous") and 0 <= ev["index"] < len(jobs):
                         approved.append(jobs[ev["index"]])
-                        logger.info("[Toptal] Disetujui: %s", jobs[ev["index"]]["title"])
+                        logger.info("[Freelancer] Disetujui: %s", jobs[ev["index"]]["title"])
             except Exception as parse_err:
-                logger.error("[Toptal] Gagal parse filter response: %s", parse_err)
+                logger.error("[Freelancer] Gagal parse filter response: %s", parse_err)
 
         return approved
 
     def apply_to_job(self, job: dict, branding_strategy: dict) -> bool:
         """
-        Apply ke job Toptal dengan cover letter professional level senior engineer.
-        Toptal mengharapkan kandidat yang sangat profesional dan spesifik.
+        Apply ke job Freelancer dengan cover letter professional.
         """
         if not job.get("url"):
             return False
@@ -158,23 +162,23 @@ class ToptalAgent:
             page = self.browser.page
             page.wait_for_timeout(4000)
 
-            apply_btn = page.get_by_role("button", name="Apply")
+            apply_btn = page.get_by_role("button", name="Bid on This Project")
             if not apply_btn.is_visible():
-                apply_btn = page.locator("button:has-text('Apply'), a:has-text('Apply for this position')").first
+                apply_btn = page.locator("button:has-text('Bid'), button:has-text('Apply')").first
 
             if not apply_btn.is_visible():
-                logger.warning("[Toptal] Tombol Apply tidak ditemukan untuk: %s", job["title"])
+                logger.warning("[Freelancer] Tombol Bid tidak ditemukan untuk: %s", job["title"])
                 return False
 
             self.browser.human_click(apply_btn)
             page.wait_for_timeout(3000)
 
-            # Generate cover letter level senior engineer via LLM
+            # Generate cover letter via LLM
             persona = branding_strategy.get("persona", "Senior Backend Engineer")
             code_quality = branding_strategy.get("code_quality", "SOLID principles")
 
             prompt = (
-                f"Write a Toptal-level professional cover letter for this senior engineering role.\n"
+                f"Write a professional bid/proposal for this Freelancer.com project.\n"
                 f"Job Title: {job['title']}\n"
                 f"Job Description: {job['description']}\n"
                 f"My Persona: {persona}. I write code following {code_quality}.\n"
@@ -191,27 +195,27 @@ class ToptalAgent:
                     "Available immediately. Please let me know your timeline expectations."
                 )
 
-            # Isi cover letter
+            # Isi bid proposal
             cover_input = page.locator(
-                "textarea[name*='cover'], textarea[placeholder*='letter'], "
-                "div[contenteditable][aria-label*='cover']"
+                "textarea[name*='proposal'], textarea[placeholder*='proposal'], "
+                "textarea[id*='proposalDescription']"
             ).first
             if cover_input.is_visible():
                 self.browser.human_type(cover_input, cover_letter)
 
             # Submit
-            submit_btn = page.get_by_role("button", name="Submit Application")
+            submit_btn = page.locator("button[type='submit']:has-text('Place Bid')").first
             if not submit_btn.is_visible():
                 submit_btn = page.locator("button:has-text('Submit'), button[type='submit']").first
 
             self.browser.human_click(submit_btn)
             page.wait_for_timeout(3000)
 
-            logger.info("[Toptal] Applied ke: %s", job["title"])
+            logger.info("[Freelancer] Applied ke: %s", job["title"])
             return True
 
         except Exception as exc:
-            logger.error("[Toptal] Gagal apply ke job %s: %s", job.get("title"), exc)
+            logger.error("[Freelancer] Gagal apply ke job %s: %s", job.get("title"), exc)
             return False
 
     def check_active_engagements(self) -> list[dict]:
@@ -221,53 +225,52 @@ class ToptalAgent:
         """
         engagements = []
         try:
-            self.browser.navigate("https://www.toptal.com/freelancers#engagements")
+            self.browser.navigate("https://www.freelancer.com/manage")
             page = self.browser.page
             page.wait_for_timeout(5000)
 
             engagement_cards = page.locator(
-                "div[class*='engagement'], article[class*='engagement']"
+                "fl-bit[class*='ProjectCard'], div[class*='project-card']"
             ).all()
 
             for card in engagement_cards[:3]:
                 try:
-                    title_elem = card.locator("h2, h3, span[class*='title']").first
-                    title = title_elem.inner_text() if title_elem.is_visible() else "Active Engagement"
+                    title_elem = card.locator("h2, h3, a[class*='project-title']").first
+                    title = title_elem.inner_text() if title_elem.is_visible() else "Active Project"
 
-                    link_elem = card.locator("a[href*='engagement']").first
+                    link_elem = card.locator("a[href*='projects']").first
                     url = link_elem.get_attribute("href") or ""
                     if url and not url.startswith("http"):
-                        url = "https://www.toptal.com" + url
+                        url = "https://www.freelancer.com" + url
 
                     engagements.append({
                         "job_id": url.split("/")[-1],
                         "title": title,
                         "description": "",
                         "url": url,
-                        "platform": "toptal"
+                        "platform": "freelancer"
                     })
                 except Exception as ce:
-                    logger.warning("[Toptal] Gagal parse engagement: %s", ce)
+                    logger.warning("[Freelancer] Gagal parse engagement: %s", ce)
 
-            logger.info("[Toptal] %d active engagement ditemukan.", len(engagements))
+            logger.info("[Freelancer] %d active project ditemukan.", len(engagements))
             return engagements
 
         except Exception as exc:
-            logger.error("[Toptal] Error cek engagements: %s", exc)
+            logger.error("[Freelancer] Error cek engagements: %s", exc)
             return []
 
     def deliver_work(self, engagement: dict, file_path: str) -> bool:
         """
-        Kirim hasil kerja ke klien Toptal melalui messaging system.
-        Toptal biasanya menggunakan platform komunikasi mereka sendiri.
+        Kirim hasil kerja ke klien Freelancer melalui messaging system.
         """
         try:
-            self.browser.navigate(engagement.get("url", "https://www.toptal.com/freelancers"))
+            self.browser.navigate(engagement.get("url", "https://www.freelancer.com/manage"))
             page = self.browser.page
             page.wait_for_timeout(4000)
 
             delivery_msg = (
-                f"Hello,\n\nI have completed the work for '{engagement.get('title', 'this engagement')}'. "
+                f"Hello,\n\nI have completed the work for '{engagement.get('title', 'this project')}'. "
                 "The solution follows SOLID principles and includes comprehensive unit tests. "
                 "Please find the attached file. I'm available for any questions or revisions.\n\n"
                 "Best regards"
@@ -280,13 +283,13 @@ class ToptalAgent:
                 page.wait_for_timeout(2000)
 
             # Kirim pesan
-            msg_box = page.locator("div[contenteditable='true'], textarea").last
+            msg_box = page.locator("div[contenteditable='true'], textarea[id*='chatInput']").last
             if msg_box.is_visible():
                 self.browser.human_type(msg_box, delivery_msg)
                 page.keyboard.press("Enter")
-                logger.info("[Toptal] Pekerjaan berhasil didelivery ke: %s", engagement.get("title"))
+                logger.info("[Freelancer] Pekerjaan berhasil didelivery ke: %s", engagement.get("title"))
                 return True
 
         except Exception as exc:
-            logger.error("[Toptal] Gagal deliver ke Toptal: %s", exc)
+            logger.error("[Freelancer] Gagal deliver ke Freelancer: %s", exc)
         return False

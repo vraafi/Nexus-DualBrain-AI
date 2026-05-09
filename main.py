@@ -5,7 +5,7 @@ Workflow utama:
   1. Crash recovery — lanjutkan task yang terputus dari database.
   2. Shared Resource Setup — Inisialisasi LLM, Telegram, Finance, dan Branding.
   3. Inbox check — Tangani negosiasi aktif di Upwork sebelum mulai rotasi.
-  4. Freelance Orchestrator — Rotasi Upwork → Fiverr → Toptal (18/7 loop).
+  4. Freelance Orchestrator — Rotasi Upwork → Fiverr → Freelancer (18/7 loop).
      - Terintegrasi dengan EmailMonitor di background untuk prioritas order.
   5. Code generation via Gemini API untuk job yang diterima.
   6. Sandbox testing (bwrap) untuk memastikan kode aman dan berfungsi.
@@ -27,7 +27,7 @@ from browser_agent import BrowserAgent
 from telegram_agent import TelegramAgent
 from freelance_agent import FreelanceAgent
 from fiverr_agent import FiverrAgent
-from toptal_agent import ToptalAgent
+from freelancer_agent import FreelancerAgent
 from freelance_branding import FreelanceBranding
 from freelance_orchestrator import FreelanceOrchestrator
 from sandbox_tester import SandboxTester
@@ -90,7 +90,7 @@ def build_shared_resources():
     branding_strategies = {
         "upwork": branding.get_branding_strategy("upwork"),
         "fiverr": branding.get_branding_strategy("fiverr"),
-        "toptal": branding.get_branding_strategy("toptal"),
+        "freelancer": branding.get_branding_strategy("freelancer"),
     }
 
     return llm, telegram, branding_strategies, finance
@@ -234,8 +234,8 @@ def run_delivery_phase(llm, telegram, job_data: dict, code_path: str, finance: F
             agent = FiverrAgent(browser, llm)
             delivery_msg = "Here is the completed code. Let me know if you need any changes."
             delivered = agent.deliver_order(job_data, code_path, delivery_msg)
-        elif platform == "toptal":
-            agent = ToptalAgent(browser, llm)
+        elif platform == "freelancer":
+            agent = FreelancerAgent(browser, llm)
             delivered = agent.deliver_work(job_data, code_path)
         
         gc.collect()

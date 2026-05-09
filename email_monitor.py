@@ -2,7 +2,7 @@
 email_monitor.py
 ================
 Monitor inbox email secara periodik menggunakan IMAP.
-Mendeteksi notifikasi pesanan masuk dari Upwork, Fiverr, dan Toptal.
+Mendeteksi notifikasi pesanan masuk dari Upwork, Fiverr, dan Freelancer.
 Berjalan di background thread terpisah agar tidak menghentikan workflow utama.
 """
 
@@ -30,7 +30,7 @@ _processed_ids: set = set()
 
 @dataclass
 class IncomingOrder:
-    platform: str           # "upwork" | "fiverr" | "toptal"
+    platform: str           # "upwork" | "fiverr" | "freelancer"
     order_id: str           # Message-ID email sebagai unique key
     client_name: str
     subject: str
@@ -91,10 +91,10 @@ PLATFORM_SIGNATURES = {
         "no-reply@fiverr.com",
         "notifications@fiverr.com",
     ],
-    "toptal": [
-        "toptal.com",
-        "no-reply@toptal.com",
-        "jobs@toptal.com",
+    "freelancer": [
+        "freelancer.com",
+        "no-reply@freelancer.com",
+        "notifications@freelancer.com",
     ],
 }
 
