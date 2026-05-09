@@ -273,9 +273,36 @@ class FreelanceOrchestrator:
             f"Pesan: {order.description}\n\n"
             "Buat balasan singkat (<80 kata) dalam bahasa Inggris. "
             "Konfirmasi kamu menerima pesanan dan akan segera mulai. "
-            "Tanyakan satu pertanyaan klarifikasi jika perlu."
+            "Tanyakan satu pertanyaan klarifikasi jika perlu. "
+            "Jika pesan klien menyiratkan revisi atau konfirmasi kontrak, sesuaikan balasan untuk mencerminkan hal tersebut."
         )
-        reply = self.llm.generate_content(prompt)
+        llm_response = self.llm.generate_content(prompt, require_json=True)
+        reply = ""
+        state = "REPLY_ONLY"
+
+        if llm_response:
+            try:
+                if "```json" in llm_response:
+                    llm_response = llm_response.split("```json")[1].split("```")[0].strip()
+                elif "```" in llm_response:
+                    llm_response = llm_response.split("```")[1].strip()
+
+                parsed = json.loads(llm_response)
+                reply = parsed.get("reply_text", "")
+                state = parsed.get("state", "REPLY_ONLY") # Default to REPLY_ONLY if state not explicitly determined
+
+                if state == "REVISION_REQUESTED":
+                    logger.info("[Orchestrator] Revisi diminta untuk pesanan %s.", order.order_id)
+                elif state == "CONTRACT_ACCEPTED":
+                    logger.info("[Orchestrator] Kontrak diterima untuk pesanan %s.", order.order_id)
+
+            except Exception as e:
+                logger.error(f"Failed to parse LLM response for _process_order: {e}\nResponse: {llm_response}")
+                reply = self.llm.generate_content(f"Balas pesan klien berikut secara profesional: {order.description}. Konfirmasi kamu menerima pesanan dan akan segera mulai.") # Fallback to simple reply
+                state = "REPLY_ONLY"
+        else:
+            reply = self.llm.generate_content(f"Balas pesan klien berikut secara profesional: {order.description}. Konfirmasi kamu menerima pesanan dan akan segera mulai.") # Fallback to simple reply
+            state = "REPLY_ONLY"
 
         if order.platform == "upwork":
             if reply:
@@ -297,19 +324,17 @@ class FreelanceOrchestrator:
         self.finance.log_proposal(order.platform, order.subject, expected_revenue=75.0)
         logger.info("[Orchestrator] Pesanan %s dari %s selesai diproses.", order.order_id, order.platform)
 
-        return {
+        job_data = {
             "title": order.subject,
             "description": order.description,
             "platform": order.platform,
             "order_id": order.order_id,
-            "url": ""
+            "url": "" # Email orders don\'t have a direct URL, might need to scrape later
         }
 
-    def _login_platform(self, platform: str):
-        try:
-            with self._browser_lock:
-                if platform == "upwork":
-                    success = self._upwork_agent.login_upwork()
+        if state in ["REVISION_REQUESTED", "CONTRACT_ACCEPTED"]:
+            return job_data
+        return None # No job data to return if it\'s just a reply or clarification
                 elif platform == "fiverr":
                     success = self._fiverr_agent.login_fiverr()
                 elif platform == "freelancer":

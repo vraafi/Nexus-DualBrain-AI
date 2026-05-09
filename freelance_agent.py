@@ -260,10 +260,13 @@ class FreelanceAgent:
                         "You are an autonomous freelance AI agent. Analyze the following recent chat history with a client on Upwork.\n"
                         f"Chat History:\n{chat_text}\n\n"
                         "Determine the state of the negotiation. Output a JSON object with exactly two keys:\n"
-                        "1. 'state': Must be one of ['NO_REPLY_NEEDED', 'REPLY_ONLY', 'REVISION_REQUESTED', 'CONTRACT_ACCEPTED']\n"
+                        "1. 'state': Must be one of ['NO_REPLY_NEEDED', 'REPLY_ONLY', 'REVISION_REQUESTED', 'CONTRACT_ACCEPTED', 'ASK_CLARIFICATION']\n"
                         "2. 'reply_text': The professional reply to send to the client (or empty string if NO_REPLY_NEEDED).\n\n"
                         "Use 'REVISION_REQUESTED' ONLY if the client explicitly asks for changes to code you already delivered or asks you to implement a new specific feature. "
-                        "Use 'CONTRACT_ACCEPTED' ONLY if the client explicitly says they hired you, sent an offer, or approved the terms."
+                        "Use 'CONTRACT_ACCEPTED' ONLY if the client explicitly says they hired you, sent an offer, or approved the terms. "
+                        "Use 'ASK_CLARIFICATION' if the client's message is unclear, ambiguous, or requires more information before proceeding. "
+                        "If 'ASK_CLARIFICATION', the 'reply_text' should contain a specific, polite question to the client."
+                    
                     )
 
                     response = self.llm.generate_content(prompt, require_json=True)
@@ -293,12 +296,19 @@ class FreelanceAgent:
                             if state in ["REVISION_REQUESTED", "CONTRACT_ACCEPTED"]:
                                 negotiation_state = state
                                 # Extract context from the page to fake job data if we need to regenerate
-                                room_title = page.locator("h2[data-test='room-title'], div.room-title").first.inner_text()
+                                room_title = page.locator("h2[data-test=\'room-title\'], div.room-title").first.inner_text()
                                 actionable_job_data = {
                                     "title": room_title,
                                     "description": f"Client follow-up / revision request based on chat:\n{chat_text}"
                                 }
-                                break # Stop checking other rooms, handle this active state first
+                            elif state == "ASK_CLARIFICATION":
+                                logging.info("Client needs clarification. Sending reply.")
+                                # No change to negotiation_state, just send reply
+                                # The orchestrator will continue searching for jobs after this reply
+                                # This state doesn't trigger code generation or delivery
+                                negotiation_state = "REPLY_ONLY" # Treat as a simple reply for orchestrator flow
+                                # The reply_text will be sent in the block above
+
 
                         except Exception as parse_e:
                             logging.error(f"Failed to parse negotiation state: {parse_e}")
