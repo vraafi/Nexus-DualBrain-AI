@@ -2,6 +2,7 @@ import requests
 import json
 import logging
 import os
+from duckduckgo_search import DDGS
 
 class GeminiClient:
     def __init__(self, api_keys):
@@ -16,22 +17,53 @@ class GeminiClient:
         self.current_key_idx = (self.current_key_idx + 1) % len(self.api_keys)
         logging.info(f"Rotated API key. Now using key index {self.current_key_idx}")
 
-    def generate_content(self, prompt, context="", require_json=False):
-        full_prompt = f"Context: {context}\n\nPrompt: {prompt}"
+    def _search_web(self, query):
+        """Performs a web search to provide up-to-date documentation context to the LLM."""
+        logging.info(f"LLM requested web search for: '{query}'")
+        try:
+             results = DDGS().text(query, max_results=3)
+             search_context = "\n".join([f"Source: {r.get('title')}\n{r.get('body')}" for r in results])
+             return search_context
+        except Exception as e:
+             logging.error(f"Search failed: {e}")
+             return "No search results available."
 
+    def generate_content(self, prompt, context="", require_json=False, allow_search=False):
+        # If search is allowed (e.g., for coding tasks), we first ask the LLM if it needs to search
+        if allow_search:
+            search_prompt = (
+                f"You are given the following task:\n{prompt}\n\n"
+                "Do you need to search the web for up-to-date API documentation or specific library syntax to solve this? "
+                "If YES, reply with ONLY the search query. If NO, reply with exactly 'NO_SEARCH'."
+            )
+            # Make a quick, low-budget call to determine search needs
+            search_decision = self._make_api_call(search_prompt, require_json=False, use_thinking=False)
+
+            if search_decision and "NO_SEARCH" not in search_decision and len(search_decision) < 100:
+                web_context = self._search_web(search_decision.strip())
+                context = f"{context}\n\nWeb Search Results for '{search_decision.strip()}':\n{web_context}"
+
+        full_prompt = f"Context: {context}\n\nPrompt: {prompt}"
+        return self._make_api_call(full_prompt, require_json)
+
+    def _make_api_call(self, full_prompt, require_json=False, use_thinking=True):
         for _ in range(len(self.api_keys)): # Try all keys before failing
             key = self._get_current_key()
             url = f"{self.base_url}?key={key}"
             headers = {'Content-Type': 'application/json'}
             data = {
-                "contents": [{"parts": [{"text": full_prompt}]}],
-                "generationConfig": {
-                    "thinkingConfig": {"thinkingLevel": "high"}
-                }
+                "contents": [{"parts": [{"text": full_prompt}]}]
             }
 
+            generation_config = {}
+            if use_thinking:
+                generation_config["thinkingConfig"] = {"thinkingLevel": "high"}
+
             if require_json:
-                data["generationConfig"]["responseMimeType"] = "application/json"
+                generation_config["responseMimeType"] = "application/json"
+
+            if generation_config:
+                data["generationConfig"] = generation_config
 
             try:
                 # Set a 60-second timeout for heavy LLM generations, especially on 'high' thinking budget

@@ -63,12 +63,25 @@ class BrowserAgent:
         time.sleep(delay / 1000.0)
 
     def human_type(self, locator, text):
-        """Types text character by character with human-like delays."""
-        locator.click()
-        for char in text:
-            self.page.keyboard.type(char)
-            delay = random.uniform(50, 150) / 1000.0
-            time.sleep(delay)
+        """Types text character by character with human-like delays, robust for contenteditable."""
+        try:
+            # Ghost cursor click to focus securely
+            if hasattr(self, 'cursor'):
+                # Try getting the selector string if possible, or fallback to regular click
+                # Ghost cursor works best with string selectors, so if it's a locator object, we do a normal click
+                locator.click()
+            else:
+                locator.click()
+
+            self._human_delay(500, 1000) # Pause before typing
+
+            # Use press_sequentially which is safer for rich text editors than page.keyboard.type
+            # We pass the entire string so the delay is applied between characters natively.
+            locator.press_sequentially(text, delay=100) # 100ms delay between characters
+        except Exception as e:
+            logging.error(f"Failed during human_type: {e}")
+            # Fallback to standard fill if typing fails entirely
+            locator.fill(text)
 
     def human_click(self, selector):
         """Uses Ghost Cursor to simulate human mouse movement before clicking."""

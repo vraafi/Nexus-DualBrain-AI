@@ -66,13 +66,25 @@ class FreelanceAgent:
             self.browser.navigate("https://www.upwork.com/nx/search/jobs/?q=python%20web%20scraping&sort=recency")
             page.wait_for_timeout(5000)
 
-            # Try to grab job titles and descriptions - Use fallback locators for lists
-            job_cards = page.locator("section[data-ev-label='search_results_impression'], article.job-tile, div.job-tile").all()
+            # Try to grab job titles and descriptions - Use semantic role-based locators to resist UI changes
+            # Upwork job cards are typically <article> elements, and the titles are usually heading links
+            job_cards = page.get_by_role("article").all()
+            if not job_cards:
+                # Fallback if the semantic role isn't explicitly defined
+                job_cards = page.locator("section[data-ev-label='search_results_impression'], div.job-tile").all()
+
             for card in job_cards[:5]:
                 try:
-                    title = card.locator("h2, h3, a.up-n-link").first.inner_text()
+                    # Semantic locators for title and description
+                    title_elem = card.get_by_role("heading").first
+                    if not title_elem.is_visible():
+                        title_elem = card.locator("h2, h3, a.up-n-link").first
+                    title = title_elem.inner_text()
+
                     description = card.locator("div[data-test='job-description-text'], span[data-test='job-description-text'], div.job-description").first.inner_text()
-                    url = card.locator("a").first.get_attribute("href")
+
+                    link_elem = card.get_by_role("link").first
+                    url = link_elem.get_attribute("href")
                     if url and not url.startswith("http"):
                         url = "https://www.upwork.com" + url
 
@@ -90,44 +102,55 @@ class FreelanceAgent:
             logging.error(f"Failed to scrape jobs: {e}")
             return jobs
 
-    def filter_job(self, job_data):
-        logging.info(f"Filtering job: {job_data.get('title')}")
+    def filter_jobs_batch(self, jobs_list):
+        """Batch evaluate multiple jobs using a single LLM API call to save RPD quota."""
+        logging.info(f"Batch filtering {len(jobs_list)} jobs...")
 
         # 1. Deterministic Negative Keyword Filter
         negative_keywords = ["zoom", "meeting", "hardware", "ios", "c#", "video call", "logo", "design"]
-        text_to_check = (job_data.get('title', '') + " " + job_data.get('description', '')).lower()
-        for kw in negative_keywords:
-            if kw in text_to_check:
-                logging.info(f"Job rejected deterministically due to negative keyword: {kw}")
-                return False, "Contains negative keyword"
+        candidates = []
+        for job in jobs_list:
+            text_to_check = (job.get('title', '') + " " + job.get('description', '')).lower()
+            if not any(kw in text_to_check for kw in negative_keywords):
+                candidates.append(job)
+            else:
+                logging.info(f"Job '{job.get('title')}' rejected by keyword filter.")
 
-        # 2. LLM Autonomy Filter (Thinking Mode)
+        if not candidates:
+            return []
+
+        # 2. LLM Autonomy Filter (Batch Mode)
         prompt = (
-            "Analyze the following freelance job description. Determine if it can be 100% completed "
-            "autonomously by an AI agent restricted to writing Python code, web scraping, and API integrations. "
-            "It CANNOT do video calls, subjective design, hardware tasks, or GUI interactions outside Playwright. "
-            "Return a JSON object with 'is_autonomous': true/false and 'reason': string.\n\n"
-            f"Title: {job_data.get('title')}\nDescription: {job_data.get('description')}"
+            "You are an AI filtering system. You must analyze the following list of freelance jobs. "
+            "Determine if each job can be 100% completed autonomously by an AI agent restricted to writing Python code, web scraping, and API integrations. "
+            "The AI CANNOT do video calls, subjective design, hardware tasks, or GUI interactions outside Playwright.\n\n"
+            "Respond ONLY with a JSON array of objects, where each object corresponds to a job by index, containing: "
+            "{'index': int, 'is_autonomous': true/false, 'reason': string}.\n\n"
         )
 
-        response = self.llm.generate_content(prompt)
+        for i, job in enumerate(candidates):
+            prompt += f"Job {i}:\nTitle: {job.get('title')}\nDescription: {job.get('description')}\n---\n"
+
+        response = self.llm.generate_content(prompt, require_json=True)
+        approved_jobs = []
         if response:
             try:
-                # Handle potential markdown wrapping
                 if "```json" in response:
                     response = response.split("```json")[1].split("```")[0].strip()
                 elif "```" in response:
                     response = response.split("```")[1].strip()
 
-                parsed = json.loads(response)
-                is_auto = parsed.get("is_autonomous", False)
-                reason = parsed.get("reason", "No reason provided")
-                logging.info(f"LLM Filter Result: {is_auto} ({reason})")
-                return is_auto, reason
+                evaluations = json.loads(response)
+                for eval_obj in evaluations:
+                    if eval_obj.get("is_autonomous"):
+                        idx = eval_obj.get("index")
+                        if 0 <= idx < len(candidates):
+                            approved_jobs.append(candidates[idx])
+                            logging.info(f"LLM Approved Job: {candidates[idx].get('title')} - Reason: {eval_obj.get('reason')}")
             except Exception as e:
-                logging.error(f"Failed to parse LLM filter response: {e}\nResponse: {response}")
+                logging.error(f"Failed to parse batched LLM filter response: {e}\nResponse: {response}")
 
-        return False, "LLM filter failed"
+        return approved_jobs
 
     def submit_proposal(self, job_data, branding_context=None, script_path=None):
         logging.info(f"Submitting proposal for: {job_data.get('title')}")
@@ -137,26 +160,47 @@ class FreelanceAgent:
                 self.browser.navigate(job_data.get("url"))
                 page.wait_for_timeout(3000)
 
-                # Check for Apply Now button with human-click
+                # Semantic check for Apply Now button
                 try:
-                    self.browser.human_click("button:has-text('Apply Now'), a:has-text('Apply Now')")
+                    apply_btn = page.get_by_role("button", name="Apply Now")
+                    if not apply_btn.is_visible():
+                        # Fallback
+                        apply_btn = page.locator("button:has-text('Apply Now'), a:has-text('Apply Now')").first
+
+                    self.browser.human_click(apply_btn)
                     page.wait_for_timeout(5000)
                 except Exception as click_e:
                     logging.warning(f"Failed to click Apply Now: {click_e}")
                     return False
 
-                # Personalize cover letter using branding context if available
-                base_intro = "Hello, I am a backend specialist specializing in Python automation."
-                if branding_context and "persona" in branding_context:
-                     base_intro = f"Hello, I am a {branding_context['persona']} specializing in Python."
-
-                cover_letter = (
-                    f"{base_intro} "
-                    "I have analyzed your requirements and can deliver a robust, headless automation script "
-                    "to solve this issue efficiently. I am available to start immediately."
+                # Generate dynamic cover letter via LLM
+                logging.info("Generating dynamic cover letter via LLM...")
+                persona = branding_context.get("persona", "Backend Python Specialist") if branding_context else "Python Developer"
+                prompt = (
+                    f"Write a highly professional and tailored Upwork cover letter for the following job.\n"
+                    f"Job Title: {job_data.get('title')}\n"
+                    f"Job Description: {job_data.get('description')}\n\n"
+                    f"My Persona: {persona}.\n"
+                    "Requirements: Keep it under 150 words. Do not use generic placeholders like [Your Name]. "
+                    "Directly address the core problem in the description and state that I have a robust, automated Python solution ready. "
+                    "End with a question to prompt a reply."
                 )
+
+                cover_letter = self.llm.generate_content(prompt)
+                if not cover_letter:
+                     logging.warning("LLM failed to generate cover letter. Using fallback.")
+                     cover_letter = (
+                         f"Hello, I am a {persona}. "
+                         "I have analyzed your requirements and can deliver a robust, headless automation script "
+                         "to solve this issue efficiently. I am available to start immediately."
+                     )
+
                 try:
-                    cover_letter_input = page.locator("textarea[aria-labelledby='cover_letter_label']").first
+                    # Semantic locator for the cover letter textbox
+                    cover_letter_input = page.get_by_role("textbox", name="Cover Letter")
+                    if not cover_letter_input.is_visible():
+                        cover_letter_input = page.locator("textarea[aria-labelledby='cover_letter_label']").first
+
                     if cover_letter_input.is_visible():
                         self.browser.human_type(cover_letter_input, cover_letter)
                 except Exception as e:
@@ -164,7 +208,10 @@ class FreelanceAgent:
 
                 # Submit via human click
                 try:
-                    self.browser.human_click("button:has-text('Send for')")
+                    submit_btn = page.get_by_role("button", name="Send for")
+                    if not submit_btn.is_visible():
+                        submit_btn = page.locator("button:has-text('Send for')").first
+                    self.browser.human_click(submit_btn)
                     logging.info("Proposal submitted successfully.")
                     return True
                 except Exception as e:
@@ -173,6 +220,68 @@ class FreelanceAgent:
         except Exception as e:
             logging.error(f"Error submitting proposal: {e}")
             return False
+
+    def check_messages_and_negotiate(self):
+        """Monitors Upwork inbox, reads new messages, and uses LLM to reply and negotiate."""
+        logging.info("Checking Upwork messages for auto-negotiation...")
+        negotiations_handled = 0
+        try:
+            page = self.browser.page
+            self.browser.navigate("https://www.upwork.com/nx/messages/")
+            page.wait_for_timeout(5000)
+
+            # Find all message rooms with unread indicators or just the recent ones
+            rooms = page.locator("div[data-test='message-room-list-item']").all()
+            for room in rooms[:3]: # Limit to top 3 recent conversations
+                try:
+                    # Semantic click on room
+                    room.click()
+                    page.wait_for_timeout(3000)
+
+                    # Extract recent messages
+                    messages = page.locator("div[data-test='message-item'], div.message-content").all()
+                    if not messages:
+                         continue
+
+                    # Get the last few messages to build context
+                    chat_history = []
+                    for msg in messages[-5:]:
+                        chat_history.append(msg.inner_text())
+
+                    if not chat_history:
+                        continue
+
+                    # Check if the last message requires a reply (e.g., if it's from the client, not us)
+                    # For simplicity in this structure, we assume we ask the LLM if a reply is needed.
+                    chat_text = "\n".join(chat_history)
+                    prompt = (
+                        "You are an autonomous freelance AI agent. Analyze the following recent chat history with a client on Upwork.\n"
+                        f"Chat History:\n{chat_text}\n\n"
+                        "Determine if you need to reply. If the client is asking a question, proposing a contract, or negotiating, "
+                        "generate a professional, concise reply to secure the contract or clarify technical details. "
+                        "If no reply is needed (e.g., you sent the last message, or the conversation is closed), return 'NO_REPLY_NEEDED'.\n"
+                        "Only return the exact reply text or 'NO_REPLY_NEEDED'."
+                    )
+
+                    reply_text = self.llm.generate_content(prompt)
+
+                    if reply_text and "NO_REPLY_NEEDED" not in reply_text:
+                        logging.info("LLM generated a negotiation reply. Sending...")
+                        msg_input = page.locator("div[contenteditable='true'], textarea").last
+                        self.browser.human_type(msg_input, reply_text)
+
+                        # Click send
+                        self.browser.human_click("button[aria-label='Send message'], button:has-text('Send')")
+                        page.wait_for_timeout(2000)
+                        negotiations_handled += 1
+
+                except Exception as room_err:
+                    logging.warning(f"Error handling a specific message room: {room_err}")
+
+        except Exception as e:
+            logging.error(f"Failed to check messages: {e}")
+
+        return negotiations_handled
 
     def deliver_work(self, job_data, file_path):
         """Delivers the final product to the client via the platform's messaging/delivery system natively."""
