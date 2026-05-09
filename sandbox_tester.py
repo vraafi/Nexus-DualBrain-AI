@@ -3,6 +3,8 @@ import time
 import subprocess
 from duckduckgo_search import DDGS
 import os
+import shutil
+import uuid
 
 class SandboxTester:
     def __init__(self, duration_minutes=15, llm_client=None):
@@ -73,8 +75,59 @@ class SandboxTester:
                  if not os.path.exists(sandbox_tmp_dir):
                      os.makedirs(sandbox_tmp_dir)
 
-                 isolated_script_path = os.path.join(sandbox_tmp_dir, os.path.basename(code_path))
+                 # Create a unique temporary directory for each test run
+                 run_id = str(uuid.uuid4())
+                 sandbox_run_dir = os.path.join(sandbox_tmp_dir, run_id)
+                 os.makedirs(sandbox_run_dir)
+
+                 isolated_script_path = os.path.join(sandbox_run_dir, os.path.basename(code_path))
                  shutil.copy2(abs_code_path, isolated_script_path)
+
+                 # Also copy requirements.txt if it exists, for isolated venv setup
+                 if os.path.exists(os.path.join(os.path.dirname(abs_code_path), "requirements.txt")):
+                     shutil.copy2(os.path.join(os.path.dirname(abs_code_path), "requirements.txt"), sandbox_run_dir)
+
+                 # Re-setup venv for each run to ensure isolation and correct dependencies
+                 # This is resource intensive, but necessary for true isolation and to avoid dependency conflicts
+                 # A more advanced solution would involve pre-built Docker images or persistent, isolated environments.
+                 run_venv_dir = os.path.join(sandbox_run_dir, self.venv_dir)
+                 subprocess.run(["python3", "-m", "venv", run_venv_dir], check=True)
+                 pip_path = os.path.join(run_venv_dir, "bin", "pip")
+                 # Install base requirements for the sandbox itself
+                 subprocess.run([pip_path, "install", "requests", "beautifulsoup4", "playwright", "flake8", "pytest"], check=True)
+                 # Install project-specific requirements if present
+                 if os.path.exists(os.path.join(sandbox_run_dir, "requirements.txt")):
+                     subprocess.run([pip_path, "install", "-r", os.path.join(sandbox_run_dir, "requirements.txt")], check=True)
+
+                 # Update python_exe and pytest_exe to point to the new venv
+                 python_exe = os.path.join(run_venv_dir, "bin", "python")
+                 pytest_exe = os.path.join(run_venv_dir, "bin", "pytest")
+
+                 # Update bwrap_cmd to bind the new sandbox_run_dir
+                 bwrap_cmd = [
+                     "bwrap",
+                     "--unshare-user",
+                     "--unshare-ipc",
+                     "--unshare-pid",
+                     "--unshare-uts",
+                     "--unshare-cgroup-try",
+                     "--die-with-parent",
+                     "--ro-bind", "/usr", "/usr",
+                     "--ro-bind", "/lib", "/lib",
+                     "--ro-bind", "/lib64", "/lib64",
+                     "--ro-bind", "/bin", "/bin",
+                     "--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf",
+                     "--ro-bind", "/etc/ssl", "/etc/ssl",
+                     "--ro-bind", run_venv_dir, run_venv_dir,
+                     "--bind", sandbox_run_dir, sandbox_run_dir, # Bind the unique run directory
+                     "--tmpfs", "/tmp",
+                     "--tmpfs", "/dev/shm",
+                     "--dev-bind", "/dev", "/dev",
+                     "--proc", "/proc",
+                     "--setenv", "PATH", "/usr/bin:/bin",
+                     "--chdir", sandbox_run_dir,
+                     pytest_exe, isolated_script_path, "-v"
+                 ]
 
                  # Step 1: Static Analysis
                  is_valid, static_errors = self._static_analysis(isolated_script_path)

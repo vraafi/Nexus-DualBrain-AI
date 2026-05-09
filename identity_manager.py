@@ -15,7 +15,9 @@ class IdentityManager:
         self.cipher = Fernet(self.key)
 
     def _derive_key(self):
-        password = os.environ.get("VAULT_PASSWORD", "default_insecure_password_change_me").encode()
+        password = os.environ.get("VAULT_PASSWORD").encode()
+        if not password:
+            raise ValueError("VAULT_PASSWORD environment variable is not set. Please set it for secure operation.")
 
         if not os.path.exists(SALT_FILE):
             salt = os.urandom(16)

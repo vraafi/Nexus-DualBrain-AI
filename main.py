@@ -14,8 +14,7 @@ Workflow utama:
 
 import time
 import logging
-import gc
-import uuid
+import uuid # Added for unique sandbox run directories
 import os
 import psutil
 from dotenv import load_dotenv
@@ -222,9 +221,24 @@ def run_sandbox_phase(llm, code_path: str, task_id: str) -> bool:
 def run_delivery_phase(llm, telegram, job_data: dict, code_path: str, finance: FinancialTracker, task_id: str):
     """Kirim hasil kerja ke platform yang sesuai."""
     wait_for_resources()
+
+    # Check if an apology file exists from the sandbox phase
+    state = load_state(task_id)
+    apology_file = state.get("data", {}).get("apology_file")
+
+    if apology_file and os.path.exists(apology_file):
+        with open(apology_file, "r") as f:
+            apology_message = f.read()
+        telegram.send_message(
+            f"⚠️ Gagal menyelesaikan job: {job_data.get(\'title\')}\nPlatform: {job_data.get(\'platform\').upper()}\n\n" +
+            f"Pesan Pembatalan untuk Klien:\n{apology_message}"
+        )
+        finance.update_job_status(job_data.get("title"), "CANCELLED")
+        logging.info("Apology message sent and job marked as cancelled.")
+        return False # Delivery failed due to cancellation
+
     platform = job_data.get("platform", "upwork").lower()
     save_state(task_id, "RUNNING", "delivery_phase", {"job_data": job_data, "code_path": code_path})
-
     delivered = False
     with BrowserAgent(headless=True) as browser:
         if platform == "upwork":
@@ -239,12 +253,11 @@ def run_delivery_phase(llm, telegram, job_data: dict, code_path: str, finance: F
             delivered = agent.deliver_work(job_data, code_path)
         
         gc.collect()
-
     if delivered:
         revenue = 50.0 # Default estimate
         finance.update_job_status(job_data.get("title"), "DELIVERED", actual_revenue=revenue)
         telegram.send_message(
-            f"🎉 SELESAI!\nJob: {job_data.get('title')}\nPlatform: {platform.upper()}\nStatus: Delivered\nRevenue: ${revenue}"
+            f"🎉 SELESAI!\nJob: {job_data.get(\'title\')}\nPlatform: {platform.upper()}\nStatus: Delivered\nRevenue: ${revenue}"
         )
         return True
     else:
