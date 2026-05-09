@@ -124,12 +124,24 @@ def run_workflow():
                 freelance = FreelanceAgent(browser, llm)
 
                 # Check inbox for active negotiations
-                negotiations = freelance.check_messages_and_negotiate()
-                if negotiations > 0:
-                     logging.info(f"Handled {negotiations} message(s). Proceeding to job hunt.")
-                     telegram.send_message(f"Auto-Negotiation complete. Replied to {negotiations} client message(s).")
+                negotiation_state, actionable_job_data = freelance.check_messages_and_negotiate()
 
-            current_step = "freelance_job_hunt_phase"
+                if negotiation_state == "REVISION_REQUESTED":
+                    logging.info(f"Client requested a revision. Moving directly to code generation for: {actionable_job_data['title']}")
+                    telegram.send_message(f"Revision requested for {actionable_job_data['title']}. Regenerating code...")
+                    job_data = actionable_job_data
+                    current_step = "code_generation_phase"
+                elif negotiation_state == "CONTRACT_ACCEPTED":
+                    logging.info("Client accepted contract. Delivering work.")
+                    telegram.send_message("Contract accepted! Proceeding to delivery.")
+                    job_data = actionable_job_data
+                    current_step = "delivery_phase"
+                elif negotiation_state == "REPLY_ONLY":
+                    logging.info("Handled negotiation reply. Proceeding to job hunt.")
+                    telegram.send_message("Auto-Negotiation complete. Replied to client message.")
+                    current_step = "freelance_job_hunt_phase"
+                else:
+                    current_step = "freelance_job_hunt_phase"
 
         if current_step == "freelance_job_hunt_phase":
             # Step 1: Freelance Job Hunting & Filtering

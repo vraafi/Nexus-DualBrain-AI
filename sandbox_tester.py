@@ -90,8 +90,17 @@ class SandboxTester:
                  # To ensure both script logic and unit tests are hit, we run pytest on the script.
                  pytest_exe = os.path.join(os.path.abspath(self.venv_dir), "bin", "pytest")
 
+                 # Use tmpfs for standard temporary directories to avoid host interference
+                 # Fully unshare user, network (if testing doesn't need it, though scraping might),
+                 # IPC, and PID namespaces.
                  bwrap_cmd = [
                      "bwrap",
+                     "--unshare-user",
+                     "--unshare-ipc",
+                     "--unshare-pid",
+                     "--unshare-uts",
+                     "--unshare-cgroup-try",
+                     "--die-with-parent",
                      "--ro-bind", "/usr", "/usr",
                      "--ro-bind", "/lib", "/lib",
                      "--ro-bind", "/lib64", "/lib64",
@@ -100,9 +109,10 @@ class SandboxTester:
                      "--ro-bind", "/etc/ssl", "/etc/ssl",
                      "--ro-bind", os.path.abspath(self.venv_dir), os.path.abspath(self.venv_dir),
                      "--bind", sandbox_tmp_dir, sandbox_tmp_dir, # Only bind the empty isolated folder
-                     "--unshare-pid",
-                     "--unshare-ipc",
-                     "--die-with-parent",
+                     "--tmpfs", "/tmp",
+                     "--tmpfs", "/dev/shm",
+                     "--dev-bind", "/dev", "/dev", # Changed from --dev to --dev-bind to prevent 'bwrap: Can't mount devtmpfs on /newroot/dev: Operation not permitted' errors in nested environments
+                     "--proc", "/proc", # Crucial for python process management
                      "--setenv", "PATH", "/usr/bin:/bin",
                      "--chdir", sandbox_tmp_dir,
                      pytest_exe, isolated_script_path, "-v" # Run tests and the script

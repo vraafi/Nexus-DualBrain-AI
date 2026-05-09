@@ -222,9 +222,11 @@ class FreelanceAgent:
             return False
 
     def check_messages_and_negotiate(self):
-        """Monitors Upwork inbox, reads new messages, and uses LLM to reply and negotiate."""
+        """Monitors Upwork inbox, reads new messages, and uses LLM to determine negotiation state and reply."""
         logging.info("Checking Upwork messages for auto-negotiation...")
-        negotiations_handled = 0
+        negotiation_state = "NO_ACTION"
+        actionable_job_data = None
+
         try:
             page = self.browser.page
             self.browser.navigate("https://www.upwork.com/nx/messages/")
@@ -251,29 +253,55 @@ class FreelanceAgent:
                     if not chat_history:
                         continue
 
-                    # Check if the last message requires a reply (e.g., if it's from the client, not us)
-                    # For simplicity in this structure, we assume we ask the LLM if a reply is needed.
                     chat_text = "\n".join(chat_history)
+
+                    # Structured Prompt to determine Negotiation State
                     prompt = (
                         "You are an autonomous freelance AI agent. Analyze the following recent chat history with a client on Upwork.\n"
                         f"Chat History:\n{chat_text}\n\n"
-                        "Determine if you need to reply. If the client is asking a question, proposing a contract, or negotiating, "
-                        "generate a professional, concise reply to secure the contract or clarify technical details. "
-                        "If no reply is needed (e.g., you sent the last message, or the conversation is closed), return 'NO_REPLY_NEEDED'.\n"
-                        "Only return the exact reply text or 'NO_REPLY_NEEDED'."
+                        "Determine the state of the negotiation. Output a JSON object with exactly two keys:\n"
+                        "1. 'state': Must be one of ['NO_REPLY_NEEDED', 'REPLY_ONLY', 'REVISION_REQUESTED', 'CONTRACT_ACCEPTED']\n"
+                        "2. 'reply_text': The professional reply to send to the client (or empty string if NO_REPLY_NEEDED).\n\n"
+                        "Use 'REVISION_REQUESTED' ONLY if the client explicitly asks for changes to code you already delivered or asks you to implement a new specific feature. "
+                        "Use 'CONTRACT_ACCEPTED' ONLY if the client explicitly says they hired you, sent an offer, or approved the terms."
                     )
 
-                    reply_text = self.llm.generate_content(prompt)
+                    response = self.llm.generate_content(prompt, require_json=True)
+                    if response:
+                        try:
+                            if "```json" in response:
+                                response = response.split("```json")[1].split("```")[0].strip()
+                            elif "```" in response:
+                                response = response.split("```")[1].strip()
 
-                    if reply_text and "NO_REPLY_NEEDED" not in reply_text:
-                        logging.info("LLM generated a negotiation reply. Sending...")
-                        msg_input = page.locator("div[contenteditable='true'], textarea").last
-                        self.browser.human_type(msg_input, reply_text)
+                            parsed = json.loads(response)
+                            state = parsed.get("state", "NO_REPLY_NEEDED")
+                            reply_text = parsed.get("reply_text", "")
 
-                        # Click send
-                        self.browser.human_click("button[aria-label='Send message'], button:has-text('Send')")
-                        page.wait_for_timeout(2000)
-                        negotiations_handled += 1
+                            logging.info(f"Negotiation Evaluation -> State: {state}")
+
+                            if state != "NO_REPLY_NEEDED" and reply_text:
+                                logging.info("Sending negotiation reply...")
+                                msg_input = page.locator("div[contenteditable='true'], textarea").last
+                                self.browser.human_type(msg_input, reply_text)
+
+                                # Click send
+                                self.browser.human_click("button[aria-label='Send message'], button:has-text('Send')")
+                                page.wait_for_timeout(2000)
+
+                            # If a revision or contract is accepted, we bubble this state up to orchestrator
+                            if state in ["REVISION_REQUESTED", "CONTRACT_ACCEPTED"]:
+                                negotiation_state = state
+                                # Extract context from the page to fake job data if we need to regenerate
+                                room_title = page.locator("h2[data-test='room-title'], div.room-title").first.inner_text()
+                                actionable_job_data = {
+                                    "title": room_title,
+                                    "description": f"Client follow-up / revision request based on chat:\n{chat_text}"
+                                }
+                                break # Stop checking other rooms, handle this active state first
+
+                        except Exception as parse_e:
+                            logging.error(f"Failed to parse negotiation state: {parse_e}")
 
                 except Exception as room_err:
                     logging.warning(f"Error handling a specific message room: {room_err}")
@@ -281,7 +309,7 @@ class FreelanceAgent:
         except Exception as e:
             logging.error(f"Failed to check messages: {e}")
 
-        return negotiations_handled
+        return negotiation_state, actionable_job_data
 
     def deliver_work(self, job_data, file_path):
         """Delivers the final product to the client via the platform's messaging/delivery system natively."""
