@@ -1,3 +1,8 @@
+"""
+identity_manager.py — Enkripsi vault untuk kredensial platform freelance
+Fix: VAULT_PASSWORD NoneType crash diperbaiki
+"""
+
 import json
 import os
 import logging
@@ -9,21 +14,27 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 VAULT_FILE = "identity_vault.enc"
 SALT_FILE = "vault.salt"
 
+
 class IdentityManager:
     def __init__(self):
         self.key = self._derive_key()
         self.cipher = Fernet(self.key)
 
     def _derive_key(self):
-        password = os.environ.get("VAULT_PASSWORD").encode()
-        if not password:
-            raise ValueError("VAULT_PASSWORD environment variable is not set. Please set it for secure operation.")
+        # FIX: Cek dulu sebelum .encode() untuk hindari NoneType crash
+        password_raw = os.environ.get("VAULT_PASSWORD")
+        if not password_raw:
+            raise ValueError(
+                "VAULT_PASSWORD belum di-set di environment. "
+                "Tambahkan ke file .env: VAULT_PASSWORD=password_kuat_kamu"
+            )
+        password = password_raw.encode()
 
         if not os.path.exists(SALT_FILE):
             salt = os.urandom(16)
             with open(SALT_FILE, "wb") as f:
                 f.write(salt)
-            logging.info("Generated new salt for Identity Vault.")
+            logging.info("Salt baru dibuat untuk Identity Vault.")
         else:
             with open(SALT_FILE, "rb") as f:
                 salt = f.read()
@@ -46,7 +57,7 @@ class IdentityManager:
             decrypted_data = self.cipher.decrypt(encrypted_data).decode()
             return json.loads(decrypted_data)
         except Exception as e:
-            logging.error(f"Failed to read vault: {e}")
+            logging.error(f"Gagal membaca vault: {e}")
             return {}
 
     def _write_vault(self, data):
@@ -55,28 +66,28 @@ class IdentityManager:
             with open(VAULT_FILE, "wb") as f:
                 f.write(encrypted_data)
         except Exception as e:
-            logging.error(f"Failed to write to vault: {e}")
+            logging.error(f"Gagal menulis ke vault: {e}")
 
     def save_credential(self, platform, username, password):
         vault = self._read_vault()
         vault[platform] = {"username": username, "password": password}
         self._write_vault(vault)
-        logging.info(f"Saved credentials securely for platform: {platform}")
+        logging.info(f"Credential berhasil disimpan untuk platform: {platform}")
 
     def get_credential(self, platform):
         vault = self._read_vault()
         cred = vault.get(platform)
         if cred:
-            # Mask logging per requirements
-            masked_user = cred['username'][:3] + "..." + cred['username'][-2:]
-            logging.info(f"Retrieved credentials for {platform} (User: {masked_user})")
+            masked_user = cred["username"][:3] + "..." + cred["username"][-2:]
+            logging.info(f"Credential dimuat untuk {platform} (User: {masked_user})")
             return cred
-        logging.warning(f"No credentials found for {platform}")
+        logging.warning(f"Tidak ada credential untuk {platform}")
         return None
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     mgr = IdentityManager()
-    mgr.save_credential("upwork", "freelance_ai@example.com", "super_secret_password")
+    mgr.save_credential("upwork", "test@example.com", "test_password")
     cred = mgr.get_credential("upwork")
-    print(f"Test retrieval successful: {bool(cred)}")
+    print(f"Test berhasil: {bool(cred)}")

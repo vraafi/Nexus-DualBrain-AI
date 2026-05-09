@@ -1,14 +1,25 @@
-# PERBAIKAN #1: Pin playwright-stealth di v1.0.6 dengan ketat
-# Jangan upgrade ke v2.x — breaking changes, stealth_sync dihapus di v2
-# Cara install yang aman: pip install -r requirements.txt
+# ─── Browser Automation & Stealth ───
+# PENTING: Jangan upgrade playwright-stealth ke v2.x (breaking changes)
 playwright==1.43.0
+playwright-stealth==1.0.6
+python-ghost-cursor==0.1.1
+bezier==2024.6.20
+
+# ─── HTTP & Web Scraping ───
 requests==2.31.0
 duckduckgo-search==5.3.0
 beautifulsoup4==4.12.3
+
+# ─── System & Utilities ───
 psutil==5.9.8
-cryptography==42.0.5
-playwright-stealth==1.0.6
 python-dotenv==1.0.1
-python-ghost-cursor==0.1.1
-bezier==2024.6.20
+
+# ─── Keamanan: Enkripsi vault kredensial ───
+cryptography==42.0.5
+
+# ─── Web Dashboard ───
 flask==3.0.2
+
+# ─── OpenClaw: AI Agent Gateway (integrasi Telegram + LLM routing) ───
+# Docs: https://docs.openclaw.ai | PyPI: https://pypi.org/project/openclaw-sdk/
+openclaw-sdk>=2026.3.0
