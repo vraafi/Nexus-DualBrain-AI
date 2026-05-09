@@ -4,7 +4,14 @@ import time
 import random
 from playwright.sync_api import sync_playwright
 from playwright_stealth import stealth_sync
-from python_ghost_cursor.playwright_sync import create_cursor
+
+# PERBAIKAN #2: Fallback aman jika python-ghost-cursor tidak bisa diinstall
+try:
+    from python_ghost_cursor.playwright_sync import create_cursor
+    GHOST_CURSOR_AVAILABLE = True
+except ImportError:
+    GHOST_CURSOR_AVAILABLE = False
+    logging.warning("python-ghost-cursor tidak tersedia. Fallback ke standard click.")
 
 class BrowserAgent:
     def __init__(self, headless=True):
@@ -13,12 +20,11 @@ class BrowserAgent:
         self.browser = None
         self.context = None
         self.page = None
+        self.cursor = None
 
     def _init_browser(self):
         try:
             self.playwright = sync_playwright().start()
-
-            # Implement Persistent Context for session management (Logins/Cookies)
             user_data_dir = "./browser_profile"
 
             self.context = self.playwright.chromium.launch_persistent_context(
@@ -35,25 +41,27 @@ class BrowserAgent:
             )
             self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
 
-            # Apply strict anti-bot measures: Match hardware to 8GB RAM specs to avoid fingerprint anomalies
             init_scripts = """
-                Object.defineProperty(navigator, 'deviceMemory', {
-                    get: () => 8
-                });
-                Object.defineProperty(navigator, 'hardwareConcurrency', {
-                    get: () => 4
-                });
+                Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+                Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
             """
             self.page.add_init_script(init_scripts)
 
-            # Apply stealth to evade bot detection
+            # stealth_sync dari playwright-stealth==1.0.6 (v1.x) — sudah benar
             stealth_sync(self.page)
 
-            # Initialize Ghost Cursor
-            self.cursor = create_cursor(self.page)
+            # PERBAIKAN #2: Inisialisasi ghost cursor dengan fallback
+            if GHOST_CURSOR_AVAILABLE:
+                try:
+                    self.cursor = create_cursor(self.page)
+                except Exception as e:
+                    logging.warning(f"Ghost cursor gagal init: {e}. Pakai standard click.")
+                    self.cursor = None
+            else:
+                self.cursor = None
 
             self.page.set_default_timeout(60000)
-            logging.info(f"Playwright browser initialized (headless={self.headless}, persistent_profile, strict_stealth, ghost_cursor).")
+            logging.info(f"Browser initialized (headless={self.headless}, ghost_cursor={self.cursor is not None}).")
         except Exception as e:
             logging.error(f"Failed to init browser: {e}")
             self.quit()
@@ -63,36 +71,29 @@ class BrowserAgent:
         time.sleep(delay / 1000.0)
 
     def human_type(self, locator, text):
-        """Types text character by character with human-like delays, robust for contenteditable."""
         try:
-            # Ghost cursor click to focus securely
-            if hasattr(self, 'cursor'):
-                # Try getting the selector string if possible, or fallback to regular click
-                # Ghost cursor works best with string selectors, so if it's a locator object, we do a normal click
-                locator.click()
-            else:
-                locator.click()
-
-            self._human_delay(500, 1000) # Pause before typing
-
-            # Use press_sequentially which is safer for rich text editors than page.keyboard.type
-            # We pass the entire string so the delay is applied between characters natively.
-            locator.press_sequentially(text, delay=100) # 100ms delay between characters
+            locator.click()
+            self._human_delay(500, 1000)
+            locator.press_sequentially(text, delay=100)
         except Exception as e:
             logging.error(f"Failed during human_type: {e}")
-            # Fallback to standard fill if typing fails entirely
-            locator.fill(text)
+            try:
+                locator.fill(text)
+            except Exception:
+                pass
 
     def human_click(self, selector):
-        """Uses Ghost Cursor to simulate human mouse movement before clicking."""
         try:
-            if hasattr(self, 'cursor'):
+            if self.cursor is not None:
                 self.cursor.click(selector)
             else:
                 self.page.click(selector)
         except Exception as e:
-            logging.warning(f"Ghost cursor failed on {selector}, falling back to standard click. Error: {e}")
-            self.page.click(selector)
+            logging.warning(f"Click gagal pada {selector}, fallback standard click. Error: {e}")
+            try:
+                self.page.click(selector)
+            except Exception as e2:
+                logging.error(f"Standard click juga gagal: {e2}")
 
     def navigate(self, url):
         if not self.page:
@@ -112,14 +113,15 @@ class BrowserAgent:
             if self.context:
                 self.context.close()
         except Exception as e:
-            logging.error(f"Error closing Playwright context: {e}")
+            logging.error(f"Error closing context: {e}")
         finally:
             self.page = None
             self.context = None
             self.browser = None
             self.playwright = None
+            self.cursor = None
             gc.collect()
-            logging.info("Browser closed and memory explicitly cleared.")
+            logging.info("Browser closed and memory cleared.")
 
     def __enter__(self):
         self._init_browser()
