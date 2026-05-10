@@ -25,6 +25,7 @@ except ImportError:
 class BrowserAgent:
     def __init__(self, headless=True, use_camoufox=True, proxy=None):
         self.headless = headless
+        self.proxy = proxy
         self.use_camoufox = use_camoufox and CAMOUFOX_AVAILABLE
         self.playwright = None
         self.browser = None
@@ -40,7 +41,7 @@ class BrowserAgent:
                     headless=self.headless,
                     humanize=True,
                     # Proxy sangat disarankan untuk Camoufox, tapi kita biarkan opsional
-                    proxy=proxy
+                    proxy=self.proxy
                 )
                 self.page = self.browser.new_page()
             else:
