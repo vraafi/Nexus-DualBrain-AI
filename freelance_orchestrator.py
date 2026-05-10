@@ -26,7 +26,7 @@ from typing import Optional
 from email_monitor import EmailMonitor, IncomingOrder
 from freelance_agent import FreelanceAgent
 from fiverr_agent import FiverrAgent
-from freelancer_agent import FreelancerAgent
+from x_agent import XAgent
 from financial_tracker import FinancialTracker
 from circuit_breaker import CircuitBreaker
 from error_learning import ErrorLearningSystem
@@ -36,43 +36,35 @@ logger = logging.getLogger(__name__)
 
 WIB = timezone(timedelta(hours=7))
 
-REST_START_WIB = 11
-REST_END_WIB   = 17
-
-PLATFORM_SLOTS = {
-    "upwork": 7 * 3600,
-    "fiverr": 6 * 3600,
-    "freelancer": 5 * 3600,
-}
-
-ROTATION_ORDER = ["upwork", "fiverr", "freelancer"]
 EMAIL_POLL_INTERVAL = int(os.environ.get("EMAIL_CHECK_INTERVAL", 300))
 
-
-def is_rest_time() -> bool:
+def get_current_platform():
+    """
+    Menentukan platform yang sedang aktif berdasarkan jadwal WIB:
+    01:00 - 11:00 : upwork
+    11:00 - 17:00 : rest (istirahat)
+    17:00 - 01:00 : fiverr
+    """
     hour = datetime.now(WIB).hour
-    return REST_START_WIB <= hour < REST_END_WIB
-
-
-def seconds_until_active() -> float:
-    now = datetime.now(WIB)
-    wake = now.replace(hour=REST_END_WIB, minute=0, second=0, microsecond=0)
-    if wake <= now:
-        wake += timedelta(days=1)
-    return (wake - now).total_seconds()
-
+    if 1 <= hour < 11:
+        return "upwork"
+    elif 11 <= hour < 17:
+        return "rest"
+    else:
+        return "fiverr"
 
 def wait_until_active():
-    if not is_rest_time():
-        return
-    sleep_sec = seconds_until_active()
-    now = datetime.now(WIB)
-    logger.info(
-        "[Scheduler] 😴 Jam istirahat (%02d:%02d WIB). Tidur %.1f jam hingga 17:00 WIB.",
-        now.hour, now.minute, sleep_sec / 3600
-    )
-    time.sleep(sleep_sec)
-    logger.info("[Scheduler] ☀️  Bangun! Waktu aktif dimulai (17:00 WIB).")
+    """Tunggu jika saat ini adalah waktu istirahat (11:00 - 17:00 WIB)."""
+    while get_current_platform() == "rest":
+        now = datetime.now(WIB)
+        wake = now.replace(hour=17, minute=0, second=0, microsecond=0)
+        sleep_sec = (wake - now).total_seconds()
+        logger.info(
+            "[Scheduler] 😴 Jam istirahat (%02d:%02d WIB). Tidur %.1f jam hingga 17:00 WIB.",
+            now.hour, now.minute, sleep_sec / 3600
+        )
+        time.sleep(min(sleep_sec, 3600))  # Cek setiap jam
+    logger.info("[Scheduler] ☀️ Waktu aktif dimulai.")
 
 
 class FreelanceOrchestrator:
@@ -86,7 +78,7 @@ class FreelanceOrchestrator:
 
         self._upwork_agent = FreelanceAgent(browser_agent, llm_client)
         self._fiverr_agent = FiverrAgent(browser_agent, llm_client)
-        self._freelancer_agent = FreelancerAgent(browser_agent, llm_client)
+        self._x_agent = XAgent(browser_agent, llm_client)
 
         self.email_monitor = EmailMonitor()
         self._platform_idx = 0
@@ -97,8 +89,7 @@ class FreelanceOrchestrator:
         # Circuit Breaker per platform
         self.circuit_breakers = {
             "upwork": CircuitBreaker("upwork"),
-            "fiverr": CircuitBreaker("fiverr"),
-            "freelancer": CircuitBreaker("freelancer")
+            "fiverr": CircuitBreaker("fiverr")
         }
 
         # Error Learning System
@@ -106,16 +97,18 @@ class FreelanceOrchestrator:
 
     def start(self):
         self.email_monitor.start()
-        logger.info("[Orchestrator] 🚀 Freelance Agent aktif. Rotasi: %s", " → ".join(ROTATION_ORDER))
+        logger.info("[Orchestrator] 🚀 Freelance Agent aktif. (Upwork: 01-11, Rest: 11-17, Fiverr: 17-01 WIB)")
 
         try:
             while True:
                 wait_until_active()
-                platform = ROTATION_ORDER[self._platform_idx]
+                platform = get_current_platform()
+                if platform == "rest":
+                    continue
+
                 job_data = self._run_platform_slot(platform)
                 if job_data:
                     return job_data
-                self._platform_idx = (self._platform_idx + 1) % len(ROTATION_ORDER)
         except KeyboardInterrupt:
             logger.info("[Orchestrator] Dihentikan oleh user.")
         finally:
@@ -129,8 +122,6 @@ class FreelanceOrchestrator:
                     success = self._upwork_agent.login_upwork()
                 elif platform == "fiverr":
                     success = self._fiverr_agent.login_fiverr()
-                elif platform == "freelancer":
-                    success = self._freelancer_agent.login_freelancer()
                 else:
                     success = False
 
@@ -142,32 +133,19 @@ class FreelanceOrchestrator:
             logger.warning("[Orchestrator] Error login %s: %s", platform, exc)
 
     def _run_platform_slot(self, platform: str):
-        slot_seconds = PLATFORM_SLOTS[platform]
-        slot_end = time.time() + slot_seconds
+        # Jalankan loop selagi masih di jam milik platform ini
         interrupt_event = threading.Event()
 
         logger.info(
-            "[Orchestrator] 🔄 Platform: %s | Slot: %d jam | Mulai: %s WIB",
-            platform.upper(), slot_seconds // 3600,
-            datetime.now(WIB).strftime("%H:%M")
+            "[Orchestrator] 🔄 Platform aktif: %s | Mulai: %s WIB",
+            platform.upper(), datetime.now(WIB).strftime("%H:%M")
         )
 
         self._login_platform(platform)
-        search_thread = self._start_search_thread(platform, slot_seconds, interrupt_event)
+        search_thread = self._start_search_thread(platform, interrupt_event)
 
-        while time.time() < slot_end and search_thread.is_alive():
+        while get_current_platform() == platform and search_thread.is_alive():
             time.sleep(EMAIL_POLL_INTERVAL)
-
-            if is_rest_time():
-                logger.info("[Orchestrator] Jam istirahat tiba di tengah slot.")
-                interrupt_event.set()
-                search_thread.join(timeout=30)
-                wait_until_active()
-                remaining = max(0, slot_end - time.time())
-                if remaining > 120:
-                    interrupt_event.clear()
-                    search_thread = self._start_search_thread(platform, remaining, interrupt_event)
-                continue
 
             if self.email_monitor.has_priority_orders():
                 job_data = self._handle_priority_orders(platform, interrupt_event, search_thread)
@@ -176,35 +154,33 @@ class FreelanceOrchestrator:
                     search_thread.join(timeout=30)
                     return job_data
 
-                remaining = max(0, slot_end - time.time())
-                if remaining > 120:
-                    logger.info("[Orchestrator] Resume slot %s — sisa %.1f menit.",
-                                platform.upper(), remaining / 60)
+                # Resume pencarian setelah pesanan diproses, asalkan jam belum berubah
+                if get_current_platform() == platform:
+                    logger.info("[Orchestrator] Resume platform %s.", platform.upper())
                     interrupt_event.clear()
-                    search_thread = self._start_search_thread(platform, remaining, interrupt_event)
+                    search_thread = self._start_search_thread(platform, interrupt_event)
 
         interrupt_event.set()
         search_thread.join(timeout=30)
-        logger.info("[Orchestrator] ✅ Slot %s selesai.", platform.upper())
+        logger.info("[Orchestrator] ✅ Slot %s selesai (ganti shift).", platform.upper())
         return None
 
-    def _start_search_thread(self, platform: str, duration: float, interrupt_event: threading.Event) -> threading.Thread:
+    def _start_search_thread(self, platform: str, interrupt_event: threading.Event) -> threading.Thread:
         t = threading.Thread(
             target=self._search_jobs,
-            args=(platform, duration, interrupt_event),
+            args=(platform, interrupt_event),
             daemon=True,
             name=f"Search-{platform}"
         )
         t.start()
         return t
 
-    def _search_jobs(self, platform: str, duration: float, stop: threading.Event):
-        """Aktif cari dan apply job selama `duration` detik."""
-        start = time.time()
+    def _search_jobs(self, platform: str, stop: threading.Event):
+        """Aktif cari dan apply job selama jam shift berlangsung."""
         applied = 0
         branding = self.branding.get(platform, {})
 
-        while (time.time() - start) < duration and not stop.is_set():
+        while get_current_platform() == platform and not stop.is_set():
             try:
                 cb = self.circuit_breakers.get(platform)
 
@@ -227,26 +203,34 @@ class FreelanceOrchestrator:
                                 time.sleep(30)
 
                     elif platform == "fiverr":
+                        # 1. Cek Order Fiverr
                         with self._browser_lock:
                             orders = self._fiverr_agent.check_active_orders()
+
+                        fiverr_activity_found = False
                         if orders:
                             logger.info("[Fiverr] %d order aktif ditemukan.", len(orders))
+                            fiverr_activity_found = True
+
+                        # 2. Cari pekerjaan di Fiverr (Buyer Requests / Promoted)
                         with self._browser_lock:
+                            # Asumsi fungsi fiverr mereturn boolean atau int activity,
+                            # kita treat eksekusi ini sebagai indikator fiverr berjalan
                             self._fiverr_agent.search_and_offer_gigs()
 
-                    elif platform == "freelancer":
-                        with self._browser_lock:
-                            jobs = self._freelancer_agent.check_job_matches()
-                            filtered = self._freelancer_agent.filter_autonomous_jobs(jobs)
-                        for job in filtered[:2]:
-                            if stop.is_set():
-                                break
+                        # Jika dirasa tidak ada order aktif, fallback ke X
+                        if not fiverr_activity_found:
+                            logger.info("[Fiverr] Tidak ada aktivitas, fallback ke X (Twitter)...")
                             with self._browser_lock:
-                                success = self._freelancer_agent.apply_to_job(job, branding)
-                            if success:
-                                applied += 1
-                                self.finance.log_proposal("freelancer", job.get("title"), 150.0)
-                            time.sleep(45)
+                                import random
+                                # Login X
+                                self._x_agent.login_x()
+
+                                # Probabilitas 30% untuk posting berita tekno lucu, sisanya cari job
+                                if random.random() < 0.3:
+                                    self._x_agent.post_tech_news()
+                                else:
+                                    self._x_agent.search_and_reply_jobs()
 
                 try:
                     if cb:
@@ -373,10 +357,6 @@ class FreelanceOrchestrator:
             }
             if reply:
                 self._fiverr_agent.reply_to_buyer(fake_order, reply)
-
-        elif order.platform == "freelancer":
-            if reply:
-                logger.info("[Freelancer] Reply ke %s: %s", order.client_name, reply[:80])
 
         # Update memori klien
         self.memory.add_negotiation_note(
