@@ -121,7 +121,7 @@ class GeminiClient:
             generation_config = {}
             supports_thinking = self.model_config.get("supports_thinking", False)
             if use_thinking and supports_thinking:
-                generation_config["thinkingConfig"] = {"thinkingBudget": 8192}
+                generation_config["thinkingConfig"] = {"thinkingLevel": "high"}
             if require_json:
                 generation_config["responseMimeType"] = "application/json"
             if generation_config:
