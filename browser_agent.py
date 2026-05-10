@@ -43,7 +43,8 @@ class BrowserAgent:
                     # Proxy sangat disarankan untuk Camoufox, tapi kita biarkan opsional
                     proxy=self.proxy
                 )
-                self.page = self.browser.new_page()
+                self.context = self.browser.start()
+                self.page = self.context.new_page()
             else:
                 self.playwright = sync_playwright().start()
                 user_data_dir = "./browser_profile"
@@ -130,7 +131,7 @@ class BrowserAgent:
     def quit(self):
         try:
             if self.use_camoufox and self.browser:
-                self.browser.close()
+                self.context.close()
             elif self.context:
                 self.context.close()
         except Exception as e:
