@@ -18,6 +18,7 @@ WSL adalah cara paling mudah untuk menjalankan perintah Linux di Windows.
    ```powershell
    wsl --install
    ```
+   *(Tips: Jika kamu tidak bisa menempelkan (paste) teks ke PowerShell menggunakan klik kanan, coba gunakan kombinasi tombol **Ctrl + V** di keyboard. Atau, klik kanan pada bingkai/judul jendela PowerShell di bagian paling atas, pilih **Properties**, centang opsi **"Use Ctrl+Shift+C/V as Copy/Paste"** atau **"QuickEdit Mode"**, lalu klik OK.)*
 4. Tunggu proses instalasi selesai. Ini akan mengunduh dan menginstal "Ubuntu" (salah satu versi Linux paling populer).
 5. Setelah selesai, **Restart (mulai ulang) komputer kamu**.
 
