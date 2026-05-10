@@ -20,6 +20,21 @@ class TelegramAgent:
              logging.error(f"Failed to send message to Telegram: {e}")
              return False
 
+    def send_photo(self, photo_path, caption=""):
+        logging.info(f"Sending photo {photo_path} to Telegram API...")
+        try:
+             with open(photo_path, "rb") as f:
+                 requests.post(
+                     f"{self.base_url}/sendPhoto",
+                     data={"chat_id": self.chat_id, "caption": caption},
+                     files={"photo": f},
+                     timeout=30
+                 )
+             return True
+        except Exception as e:
+             logging.error(f"Failed to send photo to Telegram: {e}")
+             return False
+
     def send_document(self, file_path, caption=""):
         logging.info(f"Sending document {file_path} to Telegram API...")
         try:
