@@ -2,10 +2,19 @@ import gc
 import logging
 import time
 import random
+import os
 from playwright.sync_api import sync_playwright
 from playwright_stealth import stealth_sync
 
-# PERBAIKAN #2: Fallback aman jika python-ghost-cursor tidak bisa diinstall
+# Mencoba import Camoufox untuk stealth yang lebih baik
+try:
+    from camoufox.sync_api import Camoufox
+    CAMOUFOX_AVAILABLE = True
+except ImportError:
+    CAMOUFOX_AVAILABLE = False
+    logging.warning("Camoufox tidak tersedia. Menggunakan Playwright standar.")
+
+# Fallback aman jika python-ghost-cursor tidak bisa diinstall
 try:
     from python_ghost_cursor.playwright_sync import create_cursor
     GHOST_CURSOR_AVAILABLE = True
@@ -14,8 +23,9 @@ except ImportError:
     logging.warning("python-ghost-cursor tidak tersedia. Fallback ke standard click.")
 
 class BrowserAgent:
-    def __init__(self, headless=True):
+    def __init__(self, headless=True, use_camoufox=True):
         self.headless = headless
+        self.use_camoufox = use_camoufox and CAMOUFOX_AVAILABLE
         self.playwright = None
         self.browser = None
         self.context = None
@@ -24,33 +34,41 @@ class BrowserAgent:
 
     def _init_browser(self):
         try:
-            self.playwright = sync_playwright().start()
-            user_data_dir = "./browser_profile"
+            if self.use_camoufox:
+                logging.info("Initializing browser with Camoufox...")
+                self.browser = Camoufox(
+                    headless=self.headless,
+                    humanize=True,
+                    # Proxy sangat disarankan untuk Camoufox, tapi kita biarkan opsional
+                    # proxy=os.environ.get("RESIDENTIAL_PROXY") 
+                )
+                self.page = self.browser.new_page()
+            else:
+                self.playwright = sync_playwright().start()
+                user_data_dir = "./browser_profile"
 
-            self.context = self.playwright.chromium.launch_persistent_context(
-                user_data_dir=user_data_dir,
-                headless=self.headless,
-                args=[
-                    "--disable-gpu",
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--single-process",
-                    "--disable-blink-features=AutomationControlled"
-                ],
-                no_viewport=True
-            )
-            self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
+                self.context = self.playwright.chromium.launch_persistent_context(
+                    user_data_dir=user_data_dir,
+                    headless=self.headless,
+                    args=[
+                        "--disable-gpu",
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--single-process",
+                        "--disable-blink-features=AutomationControlled"
+                    ],
+                    no_viewport=True
+                )
+                self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
 
-            init_scripts = """
-                Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-                Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
-            """
-            self.page.add_init_script(init_scripts)
+                init_scripts = """
+                    Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+                    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
+                """
+                self.page.add_init_script(init_scripts)
+                stealth_sync(self.page)
 
-            # stealth_sync dari playwright-stealth==1.0.6 (v1.x) — sudah benar
-            stealth_sync(self.page)
-
-            # PERBAIKAN #2: Inisialisasi ghost cursor dengan fallback
+            # Inisialisasi ghost cursor dengan fallback
             if GHOST_CURSOR_AVAILABLE:
                 try:
                     self.cursor = create_cursor(self.page)
@@ -61,7 +79,7 @@ class BrowserAgent:
                 self.cursor = None
 
             self.page.set_default_timeout(60000)
-            logging.info(f"Browser initialized (headless={self.headless}, ghost_cursor={self.cursor is not None}).")
+            logging.info(f"Browser initialized (Camoufox={self.use_camoufox}, headless={self.headless}, ghost_cursor={self.cursor is not None}).")
         except Exception as e:
             logging.error(f"Failed to init browser: {e}")
             self.quit()
@@ -110,10 +128,12 @@ class BrowserAgent:
 
     def quit(self):
         try:
-            if self.context:
+            if self.use_camoufox and self.browser:
+                self.browser.close()
+            elif self.context:
                 self.context.close()
         except Exception as e:
-            logging.error(f"Error closing context: {e}")
+            logging.error(f"Error closing browser/context: {e}")
         finally:
             self.page = None
             self.context = None

@@ -29,6 +29,8 @@ from freelance_agent import FreelanceAgent
 from fiverr_agent import FiverrAgent
 from freelancer_agent import FreelancerAgent
 from financial_tracker import FinancialTracker
+from circuit_breaker import CircuitBreaker
+from error_learning import ErrorLearningSystem
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +93,16 @@ class FreelanceOrchestrator:
         # PERBAIKAN #4: Browser lock — cegah crash akibat concurrent browser access
         # search_thread dan _handle_priority_orders tidak boleh pakai browser bersamaan
         self._browser_lock = threading.Lock()
+        
+        # Inisialisasi Circuit Breaker untuk tiap platform
+        self.circuit_breakers = {
+            "upwork": CircuitBreaker("upwork"),
+            "fiverr": CircuitBreaker("fiverr"),
+            "freelancer": CircuitBreaker("freelancer")
+        }
+        
+        # Inisialisasi Error Learning System
+        self.error_learner = ErrorLearningSystem()
 
     def start(self):
         self.email_monitor.start()
@@ -177,43 +189,57 @@ class FreelanceOrchestrator:
 
         while (time.time() - start) < duration and not stop.is_set():
             try:
-                if platform == "upwork":
-                    with self._browser_lock:
-                        jobs = self._upwork_agent.scrape_jobs()
-                    if jobs:
+                cb = self.circuit_breakers.get(platform)
+                
+                def run_platform_logic():
+                    nonlocal applied
+                    if platform == "upwork":
                         with self._browser_lock:
-                            filtered = self._upwork_agent.filter_jobs_batch(jobs)
+                            jobs = self._upwork_agent.scrape_jobs()
+                        if jobs:
+                            with self._browser_lock:
+                                filtered = self._upwork_agent.filter_jobs_batch(jobs)
+                            for job in filtered[:2]:
+                                if stop.is_set():
+                                    break
+                                with self._browser_lock:
+                                    success = self._upwork_agent.submit_proposal(job, branding)
+                                if success:
+                                    applied += 1
+                                    self.finance.log_proposal("upwork", job.get("title"), 50.0)
+                                time.sleep(30)
+
+                    elif platform == "fiverr":
+                        with self._browser_lock:
+                            orders = self._fiverr_agent.check_active_orders()
+                        if orders:
+                            logger.info("[Fiverr] %d order aktif ditemukan.", len(orders))
+                        with self._browser_lock:
+                            self._fiverr_agent.search_and_offer_gigs()
+
+                    elif platform == "freelancer":
+                        with self._browser_lock:
+                            jobs = self._freelancer_agent.check_job_matches()
+                            filtered = self._freelancer_agent.filter_autonomous_jobs(jobs)
                         for job in filtered[:2]:
                             if stop.is_set():
                                 break
                             with self._browser_lock:
-                                success = self._upwork_agent.submit_proposal(job, branding)
+                                success = self._freelancer_agent.apply_to_job(job, branding)
                             if success:
                                 applied += 1
-                                self.finance.log_proposal("upwork", job.get("title"), 50.0)
-                            time.sleep(30)
+                                self.finance.log_proposal("freelancer", job.get("title"), 150.0)
+                            time.sleep(45)
 
-                elif platform == "fiverr":
-                    with self._browser_lock:
-                        orders = self._fiverr_agent.check_active_orders()
-                    if orders:
-                        logger.info("[Fiverr] %d order aktif ditemukan.", len(orders))
-                    with self._browser_lock:
-                        self._fiverr_agent.search_and_offer_gigs()
-
-                elif platform == "freelancer":
-                    with self._browser_lock:
-                        jobs = self._freelancer_agent.check_job_matches()
-                        filtered = self._freelancer_agent.filter_autonomous_jobs(jobs)
-                    for job in filtered[:2]:
-                        if stop.is_set():
-                            break
-                        with self._browser_lock:
-                            success = self._freelancer_agent.apply_to_job(job, branding)
-                        if success:
-                            applied += 1
-                            self.finance.log_proposal("freelancer", job.get("title"), 150.0)
-                        time.sleep(45)
+                try:
+                    if cb:
+                        cb.call(run_platform_logic)
+                    else:
+                        run_platform_logic()
+                except Exception as e:
+                    logger.error(f"[Orchestrator] Circuit Breaker/Logic Error for {platform}: {e}")
+                    self.error_learner.record_error(platform, type(e).__name__, str(e))
+                    time.sleep(60)
 
                 # Jeda 10 menit antar siklus pencarian
                 idle_wait = 0

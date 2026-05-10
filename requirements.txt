@@ -23,3 +23,4 @@ flask==3.0.2
 # ─── OpenClaw: AI Agent Gateway (integrasi Telegram + LLM routing) ───
 # Docs: https://docs.openclaw.ai | PyPI: https://pypi.org/project/openclaw-sdk/
 openclaw-sdk>=2026.3.0
+camoufox==0.4.11
