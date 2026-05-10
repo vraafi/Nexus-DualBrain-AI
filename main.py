@@ -41,7 +41,11 @@ from api_client import GeminiClient
 from financial_tracker import FinancialTracker
 from openclaw_agent import OpenClawAgent
 
-load_dotenv()
+    load_dotenv()
+
+    RESIDENTIAL_PROXIES_STR = os.environ.get("RESIDENTIAL_PROXIES", "")
+    RESIDENTIAL_PROXIES = [p.strip() for p in RESIDENTIAL_PROXIES_STR.split(",") if p.strip()]
+
 
 # ─── LOGGING ───
 log_formatter = logging.Formatter("%(asctime)s [%(threadName)s] %(levelname)s — %(message)s")
@@ -65,6 +69,15 @@ def wait_for_resources():
         else:
             break
 
+
+current_proxy_index = 0
+def get_next_proxy(proxies):
+    global current_proxy_index
+    if not proxies:
+        return None
+    proxy = proxies[current_proxy_index]
+    current_proxy_index = (current_proxy_index + 1) % len(proxies)
+    return proxy
 
 def build_shared_resources():
     api_keys = [os.environ.get(f"GEMINI_KEY_{i}") for i in range(1, 11)
@@ -126,12 +139,14 @@ def run_workflow(openclaw, finance, llm, branding_strategies):
             _workflow_state["current_step"] = "inbox_monitor_phase"
             wait_for_resources()
             save_state(task_id, "RUNNING", "inbox_monitor_phase", {})
-            with BrowserAgent(headless=True) as browser:
+            current_proxy = get_next_proxy(RESIDENTIAL_PROXIES)
+            with BrowserAgent(headless=True, proxy=current_proxy) as browser:
                 agent = FreelanceAgent(browser, llm)
                 login_ok = agent.login_upwork()
             gc.collect()
             if login_ok:
-                with BrowserAgent(headless=True) as browser:
+                current_proxy = get_next_proxy(RESIDENTIAL_PROXIES)
+                with BrowserAgent(headless=True, proxy=current_proxy) as browser:
                     agent = FreelanceAgent(browser, llm)
                     state, job_data = agent.check_messages_and_negotiate()
                 gc.collect()
@@ -147,7 +162,8 @@ def run_workflow(openclaw, finance, llm, branding_strategies):
             _workflow_state["current_step"] = "freelance_phase"
             wait_for_resources()
             save_state(task_id, "RUNNING", "freelance_phase", {})
-            with BrowserAgent(headless=True) as browser:
+            current_proxy = get_next_proxy(RESIDENTIAL_PROXIES)
+            with BrowserAgent(headless=True, proxy=current_proxy) as browser:
                 orchestrator = FreelanceOrchestrator(
                     browser_agent=browser, llm_client=llm,
                     branding_strategies=branding_strategies
@@ -209,7 +225,8 @@ def run_workflow(openclaw, finance, llm, branding_strategies):
             save_state(task_id, "RUNNING", "delivery_phase",
                        {"job_data": job_data, "code_path": code_path})
             delivered = False
-            with BrowserAgent(headless=True) as browser:
+            current_proxy = get_next_proxy(RESIDENTIAL_PROXIES)
+            with BrowserAgent(headless=True, proxy=current_proxy) as browser:
                 if platform == "upwork":
                     agent = FreelanceAgent(browser, llm)
                     delivered = agent.deliver_work(job_data, code_path)

@@ -23,7 +23,7 @@ except ImportError:
     logging.warning("python-ghost-cursor tidak tersedia. Fallback ke standard click.")
 
 class BrowserAgent:
-    def __init__(self, headless=True, use_camoufox=True):
+    def __init__(self, headless=True, use_camoufox=True, proxy=None):
         self.headless = headless
         self.use_camoufox = use_camoufox and CAMOUFOX_AVAILABLE
         self.playwright = None
@@ -40,7 +40,7 @@ class BrowserAgent:
                     headless=self.headless,
                     humanize=True,
                     # Proxy sangat disarankan untuk Camoufox, tapi kita biarkan opsional
-                    # proxy=os.environ.get("RESIDENTIAL_PROXY") 
+                    proxy=proxy
                 )
                 self.page = self.browser.new_page()
             else:
