@@ -42,9 +42,9 @@ Di dalam terminal Ubuntu yang masih terbuka, kita perlu menginstal beberapa pera
    ```
    *(Kamu mungkin akan diminta memasukkan password Ubuntu yang baru saja kamu buat. Ingat, ketikannya tidak akan terlihat.)*
 
-2. Instal alat yang dibutuhkan oleh AI Agent (termasuk `bubblewrap` dan `python3-pip`) dengan mengetik:
+2. Instal alat yang dibutuhkan oleh AI Agent (termasuk `bubblewrap`, `python3-venv`, dan `python3-pip`) dengan mengetik:
    ```bash
-   sudo apt-get install -y bubblewrap python3-pip git
+   sudo apt-get install -y bubblewrap python3-venv python3-pip git
    ```
    Tunggu hingga proses pengunduhan dan instalasi selesai.
 
@@ -52,24 +52,37 @@ Di dalam terminal Ubuntu yang masih terbuka, kita perlu menginstal beberapa pera
 
 Sekarang kita akan mengunduh kode AI Agent ini ke dalam komputer kamu.
 
-1. Di terminal Ubuntu, ketik perintah berikut dan tekan Enter:
+1. Pindah ke direktori utama (Home) agar aman dari masalah perizinan (permission):
    ```bash
-   git clone https://github.com/USERNAME/REPOSITORY_NAME.git ai-agent
+   cd ~
    ```
-   *(Catatan: Ganti URL di atas dengan URL GitHub tempat AI Agent ini berada jika kamu tahu, atau jika kamu sudah memiliki file kodenya di Windows, kamu bisa mengaksesnya lewat `/mnt/c/`.)*
 
-   **Alternatif jika kamu sudah mendownload file `.zip`:**
-   Jika kamu sudah mendownload kode ini dalam bentuk zip dan mengekstraknya di folder `Downloads` Windows-mu, kamu bisa masuk ke folder tersebut dari Ubuntu dengan mengetik:
+2. Di terminal Ubuntu, ketik perintah berikut dan tekan Enter:
    ```bash
-   cd /mnt/c/Users/NAMA_USER_WINDOWS_KAMU/Downloads/NAMA_FOLDER_AGENT
+   git clone https://github.com/vraafi/Nexus-DualBrain-AI.git ai-agent
    ```
-   *(Ganti `NAMA_USER_WINDOWS_KAMU` dengan username komputermu, dan `NAMA_FOLDER_AGENT` dengan nama folder yang diekstrak).*
 
 ## Langkah 5: Menginstal Dependensi (Bahan-bahan yang Dibutuhkan AI)
 
-Pastikan kamu berada di dalam folder AI Agent di terminal Ubuntu. (Jika kamu menggunakan `git clone` tadi, ketik `cd ai-agent` lalu Enter).
+Pastikan kamu masuk ke dalam folder AI Agent di terminal Ubuntu.
 
-1. Instal bahan-bahan Python yang dibutuhkan dengan mengetik:
+1. Masuk ke folder:
+   ```bash
+   cd ai-agent
+   ```
+
+2. Buat lingkungan virtual khusus (virtual environment) agar sistem komputer utama kamu tetap bersih:
+   ```bash
+   python3 -m venv venv
+   ```
+
+3. Aktifkan lingkungan virtual tersebut:
+   ```bash
+   source venv/bin/activate
+   ```
+   *(Setelah perintah ini berhasil, kamu akan melihat tulisan `(venv)` muncul di bagian paling kiri baris terminal kamu).*
+
+4. Instal bahan-bahan Python yang dibutuhkan dengan mengetik:
    ```bash
    pip install -r requirements.txt
    ```
