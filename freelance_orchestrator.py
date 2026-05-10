@@ -11,15 +11,14 @@ Logika:
   - Jadwal istirahat: 11:00-17:00 WIB (dini hari Amerika, klien sedang tidur)
   - Waktu aktif: 17:00 WIB - 11:00 WIB (09:00-23:00 ET, klien Amerika aktif)
 
-PERBAIKAN #4: Tambah self._browser_lock — threading.Lock() agar hanya 1 thread
-yang mengakses Playwright browser pada satu waktu. Playwright sync API tidak
-thread-safe, tanpa lock ini akan crash saat email interrupt terjadi bersamaan
-dengan job search yang sedang berjalan.
+FIX: Syntax error di _process_order() — elif yang salah posisi diperbaiki.
+FIX: _login_platform() dipindahkan ke tempat yang benar.
 """
 
 import time
 import logging
 import threading
+import json
 import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -31,6 +30,7 @@ from freelancer_agent import FreelancerAgent
 from financial_tracker import FinancialTracker
 from circuit_breaker import CircuitBreaker
 from error_learning import ErrorLearningSystem
+from client_memory import ClientMemory
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,7 @@ class FreelanceOrchestrator:
         self.llm = llm_client
         self.branding = branding_strategies
         self.finance = FinancialTracker()
+        self.memory = ClientMemory()
 
         self._upwork_agent = FreelanceAgent(browser_agent, llm_client)
         self._fiverr_agent = FiverrAgent(browser_agent, llm_client)
@@ -90,18 +91,17 @@ class FreelanceOrchestrator:
         self.email_monitor = EmailMonitor()
         self._platform_idx = 0
 
-        # PERBAIKAN #4: Browser lock — cegah crash akibat concurrent browser access
-        # search_thread dan _handle_priority_orders tidak boleh pakai browser bersamaan
+        # Browser lock — cegah crash akibat concurrent browser access
         self._browser_lock = threading.Lock()
-        
-        # Inisialisasi Circuit Breaker untuk tiap platform
+
+        # Circuit Breaker per platform
         self.circuit_breakers = {
             "upwork": CircuitBreaker("upwork"),
             "fiverr": CircuitBreaker("fiverr"),
             "freelancer": CircuitBreaker("freelancer")
         }
-        
-        # Inisialisasi Error Learning System
+
+        # Error Learning System
         self.error_learner = ErrorLearningSystem()
 
     def start(self):
@@ -120,6 +120,26 @@ class FreelanceOrchestrator:
             logger.info("[Orchestrator] Dihentikan oleh user.")
         finally:
             self.email_monitor.stop()
+
+    def _login_platform(self, platform: str):
+        """Login ke platform yang ditentukan. Dijalankan sekali di awal slot."""
+        try:
+            with self._browser_lock:
+                if platform == "upwork":
+                    success = self._upwork_agent.login_upwork()
+                elif platform == "fiverr":
+                    success = self._fiverr_agent.login_fiverr()
+                elif platform == "freelancer":
+                    success = self._freelancer_agent.login_freelancer()
+                else:
+                    success = False
+
+            if success:
+                logger.info("[Orchestrator] Login %s berhasil.", platform.upper())
+            else:
+                logger.warning("[Orchestrator] Login %s GAGAL — lanjut dengan sesi lama.", platform.upper())
+        except Exception as exc:
+            logger.warning("[Orchestrator] Error login %s: %s", platform, exc)
 
     def _run_platform_slot(self, platform: str):
         slot_seconds = PLATFORM_SLOTS[platform]
@@ -179,10 +199,7 @@ class FreelanceOrchestrator:
         return t
 
     def _search_jobs(self, platform: str, duration: float, stop: threading.Event):
-        """
-        Aktif cari dan apply job selama `duration` detik.
-        PERBAIKAN #4: Semua akses browser dibungkus self._browser_lock
-        """
+        """Aktif cari dan apply job selama `duration` detik."""
         start = time.time()
         applied = 0
         branding = self.branding.get(platform, {})
@@ -190,7 +207,7 @@ class FreelanceOrchestrator:
         while (time.time() - start) < duration and not stop.is_set():
             try:
                 cb = self.circuit_breakers.get(platform)
-                
+
                 def run_platform_logic():
                     nonlocal applied
                     if platform == "upwork":
@@ -237,7 +254,7 @@ class FreelanceOrchestrator:
                     else:
                         run_platform_logic()
                 except Exception as e:
-                    logger.error(f"[Orchestrator] Circuit Breaker/Logic Error for {platform}: {e}")
+                    logger.error(f"[Orchestrator] Error for {platform}: {e}")
                     self.error_learner.record_error(platform, type(e).__name__, str(e))
                     time.sleep(60)
 
@@ -263,8 +280,7 @@ class FreelanceOrchestrator:
             count, current_platform.upper()
         )
 
-        # Hentikan search_thread dulu SEBELUM ambil browser_lock
-        # Urutan ini penting — cegah deadlock
+        # Hentikan search_thread dulu SEBELUM ambil browser_lock (cegah deadlock)
         interrupt_event.set()
         search_thread.join(timeout=30)
 
@@ -279,7 +295,6 @@ class FreelanceOrchestrator:
                 order.client_name, order.platform.upper(), order.subject
             )
             try:
-                # PERBAIKAN #4: Lock saat handle pesanan (akses browser)
                 with self._browser_lock:
                     job_data = self._process_order(order)
                     if job_data and not job_data_to_return:
@@ -291,18 +306,32 @@ class FreelanceOrchestrator:
         return job_data_to_return
 
     def _process_order(self, order: IncomingOrder):
+        """
+        Proses satu order dari email. Generate reply dan tentukan state.
+        FIXED: Tidak ada lagi syntax error di blok ini.
+        """
+        # Ambil konteks memori klien
+        client_ctx = self.memory.get_context_for_llm(order.platform, order.client_name)
+
         prompt = (
-            f"Kamu adalah freelance AI agent. Balas pesan klien berikut secara profesional.\n"
+            f"Kamu adalah freelance AI agent profesional. Balas pesan klien berikut.\n"
             f"Platform: {order.platform.upper()}\n"
             f"Dari: {order.client_name}\n"
             f"Subject: {order.subject}\n"
-            f"Pesan: {order.description}\n\n"
-            "Buat balasan singkat (<80 kata) dalam bahasa Inggris. "
-            "Konfirmasi kamu menerima pesanan dan akan segera mulai. "
-            "Tanyakan satu pertanyaan klarifikasi jika perlu. "
-            "Jika pesan klien menyiratkan revisi atau konfirmasi kontrak, sesuaikan balasan untuk mencerminkan hal tersebut."
+            f"Pesan: {order.description}\n"
         )
-        llm_response = self.llm.generate_content(prompt, require_json=True)
+        if client_ctx:
+            prompt += f"\nKonteks klien dari riwayat:\n{client_ctx}\n"
+        prompt += (
+            "\nOutput JSON dengan dua key:\n"
+            "1. 'state': satu dari ['REPLY_ONLY', 'REVISION_REQUESTED', 'CONTRACT_ACCEPTED', 'ASK_CLARIFICATION']\n"
+            "2. 'reply_text': balasan profesional dalam bahasa Inggris (<80 kata)\n\n"
+            "Gunakan CONTRACT_ACCEPTED HANYA jika klien explicitly menyetujui kontrak/order.\n"
+            "Gunakan REVISION_REQUESTED HANYA jika klien minta perubahan spesifik pada deliverable."
+        )
+
+        # Gunakan negotiation model (26b) untuk analisis pesan
+        llm_response = self.llm.generate_content(prompt, require_json=True, use_negotiation_model=True)
         reply = ""
         state = "REPLY_ONLY"
 
@@ -315,21 +344,22 @@ class FreelanceOrchestrator:
 
                 parsed = json.loads(llm_response)
                 reply = parsed.get("reply_text", "")
-                state = parsed.get("state", "REPLY_ONLY") # Default to REPLY_ONLY if state not explicitly determined
-
-                if state == "REVISION_REQUESTED":
-                    logger.info("[Orchestrator] Revisi diminta untuk pesanan %s.", order.order_id)
-                elif state == "CONTRACT_ACCEPTED":
-                    logger.info("[Orchestrator] Kontrak diterima untuk pesanan %s.", order.order_id)
+                state = parsed.get("state", "REPLY_ONLY")
 
             except Exception as e:
-                logger.error(f"Failed to parse LLM response for _process_order: {e}\nResponse: {llm_response}")
-                reply = self.llm.generate_content(f"Balas pesan klien berikut secara profesional: {order.description}. Konfirmasi kamu menerima pesanan dan akan segera mulai.") # Fallback to simple reply
+                logger.error(f"Failed to parse LLM response: {e}")
+                # Fallback: generate reply sederhana
+                reply = self.llm.generate_content(
+                    f"Write a short professional reply to this freelance client message: {order.description[:200]}. "
+                    "Confirm receipt and that you'll start soon. Max 60 words.",
+                    use_negotiation_model=True
+                ) or "Thank you for your message! I've received your order and will start working on it shortly."
                 state = "REPLY_ONLY"
         else:
-            reply = self.llm.generate_content(f"Balas pesan klien berikut secara profesional: {order.description}. Konfirmasi kamu menerima pesanan dan akan segera mulai.") # Fallback to simple reply
+            reply = "Thank you for your message! I've received your order and will begin shortly."
             state = "REPLY_ONLY"
 
+        # Kirim reply ke platform yang sesuai
         if order.platform == "upwork":
             if reply:
                 logger.info("[Upwork] Reply ke %s: %s", order.client_name, reply[:80])
@@ -345,32 +375,29 @@ class FreelanceOrchestrator:
                 self._fiverr_agent.reply_to_buyer(fake_order, reply)
 
         elif order.platform == "freelancer":
-            logger.info("[Freelancer] Pesanan aktif: %s — siapkan kode.", order.subject)
+            if reply:
+                logger.info("[Freelancer] Reply ke %s: %s", order.client_name, reply[:80])
 
+        # Update memori klien
+        self.memory.add_negotiation_note(
+            order.platform, order.client_name,
+            f"Email order — state: {state} | subject: {order.subject}"
+        )
         self.finance.log_proposal(order.platform, order.subject, expected_revenue=75.0)
-        logger.info("[Orchestrator] Pesanan %s dari %s selesai diproses.", order.order_id, order.platform)
 
-        job_data = {
-            "title": order.subject,
-            "description": order.description,
-            "platform": order.platform,
-            "order_id": order.order_id,
-            "url": "" # Email orders don\'t have a direct URL, might need to scrape later
-        }
+        logger.info("[Orchestrator] Pesanan %s dari %s selesai diproses. State: %s",
+                    order.order_id, order.platform, state)
 
+        # Hanya return job_data jika perlu tindakan lanjut (codegen)
         if state in ["REVISION_REQUESTED", "CONTRACT_ACCEPTED"]:
-            return job_data
-        return None # No job data to return if it\'s just a reply or clarification
-                elif platform == "fiverr":
-                    success = self._fiverr_agent.login_fiverr()
-                elif platform == "freelancer":
-                    success = self._freelancer_agent.login_freelancer()
-                else:
-                    success = False
+            return {
+                "title": order.subject,
+                "description": order.description,
+                "platform": order.platform,
+                "order_id": order.order_id,
+                "client_username": order.client_name,
+                "url": ""
+            }
 
-            if success:
-                logger.info("[Orchestrator] Login %s berhasil.", platform.upper())
-            else:
-                logger.warning("[Orchestrator] Login %s GAGAL — lanjut dengan sesi lama.", platform.upper())
-        except Exception as exc:
-            logger.warning("[Orchestrator] Error login %s: %s", platform, exc)
+        # Untuk REPLY_ONLY dan ASK_CLARIFICATION: tidak perlu codegen
+        return None

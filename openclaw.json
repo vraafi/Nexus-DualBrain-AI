@@ -1,0 +1,74 @@
+{
+  "version": "2026.4.26",
+  "gateway": {
+    "port": 18789,
+    "host": "127.0.0.1"
+  },
+  "workspace": "~/.openclaw",
+  "skills": [
+    "~/.openclaw/skills"
+  ],
+  "memory": {
+    "path": "~/.openclaw/memory",
+    "autoSave": true,
+    "clientMemoryDir": "~/.openclaw/memory/clients"
+  },
+  "browser": {
+    "enabled": true,
+    "mode": "extension-relay",
+    "extensionRelayPort": 18792,
+    "managedPort": 18800,
+    "defaultMode": "extension-relay",
+    "timeout": 30000
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "token": "${TELEGRAM_BOT_TOKEN}",
+      "chatId": "${TELEGRAM_CHAT_ID}",
+      "commands": ["/status", "/pause", "/resume", "/earnings", "/jobs", "/help"]
+    }
+  },
+  "llm": {
+    "provider": "google",
+    "model": "gemini-3.1-flash-lite-preview",
+    "apiKey": "${GEMINI_KEY_1}",
+    "codegenModel": "gemma-4-31b-it",
+    "negotiationModel": "gemma-4-26b-a4b-it",
+    "fallbackModel": "gemini-3.1-flash-lite-preview",
+    "temperature": 0.2,
+    "maxTokens": 8192
+  },
+  "agents": {
+    "nexus-main": {
+      "description": "Nexus DualBrain AI — Autonomous Freelance Agent",
+      "soul": "~/.openclaw/SOUL.md",
+      "heartbeat": "~/.openclaw/HEARTBEAT.md",
+      "memory": "~/.openclaw/memory/MEMORY.md",
+      "skills": [
+        "01-upwork-search",
+        "02-fiverr-orders",
+        "03-freelancer-search",
+        "04-negotiate",
+        "05-codegen",
+        "06-sandbox-test",
+        "07-deliver",
+        "08-memory-client"
+      ],
+      "tools": {
+        "allow": ["browser", "exec", "read", "write", "fetch", "web_search"]
+      }
+    }
+  },
+  "scheduler": {
+    "enabled": true,
+    "timezone": "Asia/Jakarta",
+    "restHours": { "start": 11, "end": 17 },
+    "activeHours": { "start": 17, "end": 11 }
+  },
+  "security": {
+    "allowFrom": ["127.0.0.1"],
+    "sandboxExec": true,
+    "requireApprovalForDestructive": true
+  }
+}

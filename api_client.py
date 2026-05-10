@@ -1,6 +1,6 @@
 """
-api_client.py — Client untuk Gemini API dengan multi-key rotation & exponential backoff
-Update: Support model Gemini 2.5 Pro, 2.5 Flash, 2.0 Flash + OpenClaw routing
+api_client.py — Client untuk Gemini/Gemma API dengan multi-key rotation & exponential backoff
+Update: Support model hierarki 3-tier (31b → 26b → flash-lite) + NEGOTIATION_MODEL
 """
 
 import requests
@@ -9,7 +9,7 @@ import logging
 import os
 import time
 from duckduckgo_search import DDGS
-from llm_config import LLM_MODELS, DEFAULT_LLM_MODEL, CODEGEN_MODEL, FALLBACK_MODEL
+from llm_config import LLM_MODELS, DEFAULT_LLM_MODEL, CODEGEN_MODEL, NEGOTIATION_MODEL, FALLBACK_MODEL
 
 
 class GeminiClient:
@@ -28,7 +28,7 @@ class GeminiClient:
         logging.info(f"API key dirotasi. Sekarang menggunakan key index {self.current_key_idx}")
 
     def _switch_model(self, model_name: str):
-        """Ganti model secara dinamis (contoh: switch ke codegen model untuk task coding)."""
+        """Ganti model secara dinamis."""
         if model_name not in LLM_MODELS:
             logging.warning(f"Model '{model_name}' tidak dikenal. Tetap gunakan {self.model_name}.")
             return
@@ -52,16 +52,22 @@ class GeminiClient:
             return "Tidak ada hasil search."
 
     def generate_content(self, prompt, context="", require_json=False,
-                         allow_search=False, use_codegen_model=False):
+                         allow_search=False, use_codegen_model=False,
+                         use_negotiation_model=False):
         """
         Generate konten dari LLM.
-        - use_codegen_model=True → pakai Gemini 2.5 Pro (untuk code generation)
-        - allow_search=True → LLM bisa request web search otomatis
+        - use_codegen_model=True      → pakai gemma-4-31b-it (terkuat, untuk code)
+        - use_negotiation_model=True  → pakai gemma-4-26b-a4b-it (menengah, untuk negosiasi)
+        - default                     → gemini-3.1-flash-lite-preview (hemat, high-frequency)
+        - allow_search=True           → LLM bisa request web search otomatis
         """
-        # Switch ke model yang tepat
         original_model = self.model_name
+
+        # Pilih model berdasarkan prioritas
         if use_codegen_model and self.model_name != CODEGEN_MODEL:
             self._switch_model(CODEGEN_MODEL)
+        elif use_negotiation_model and self.model_name != NEGOTIATION_MODEL:
+            self._switch_model(NEGOTIATION_MODEL)
 
         # Web search jika diizinkan
         if allow_search:
@@ -79,20 +85,30 @@ class GeminiClient:
         full_prompt = f"Context: {context}\n\nPrompt: {prompt}" if context else prompt
         result = self._make_api_call(full_prompt, require_json)
 
-        # Kembalikan ke model asal jika sudah switch
-        if use_codegen_model and self.model_name != original_model:
+        # Kembalikan ke model asal
+        if self.model_name != original_model:
             self._switch_model(original_model)
 
-        # Fallback ke model yang lebih ringan jika semua key gagal
-        if result is None and self.model_name != FALLBACK_MODEL:
-            logging.warning(f"Semua key gagal di {self.model_name}. Fallback ke {FALLBACK_MODEL}.")
-            self._switch_model(FALLBACK_MODEL)
-            result = self._make_api_call(full_prompt, require_json)
+        # Fallback bertahap: 31b → 26b → flash-lite
+        if result is None:
+            fallback_chain = [NEGOTIATION_MODEL, FALLBACK_MODEL]
+            for fallback in fallback_chain:
+                if self.model_name == fallback:
+                    continue
+                logging.warning(f"Gagal di {self.model_name}. Fallback ke {fallback}.")
+                self._switch_model(fallback)
+                result = self._make_api_call(full_prompt, require_json)
+                if result:
+                    break
+
+        # Restore model asal
+        if self.model_name != original_model:
+            self._switch_model(original_model)
 
         return result
 
     def _make_api_call(self, full_prompt, require_json=False, use_thinking=True):
-        """HTTP call ke Gemini API dengan exponential backoff dan key rotation."""
+        """HTTP call ke Gemini/Gemma API dengan exponential backoff dan key rotation."""
         max_retries = self.model_config["max_retries"]
 
         for attempt in range(max_retries):
@@ -128,14 +144,12 @@ class GeminiClient:
                     return None
 
                 elif response.status_code == 429:
-                    # Rate limit: exponential backoff + rotasi key
                     delay = min(self.model_config["rate_limit_delay"] * (2 ** attempt), 300)
                     logging.warning(f"Rate limit. Menunggu {delay}s lalu rotasi key...")
                     time.sleep(delay)
                     self._rotate_key()
 
                 elif response.status_code in (500, 502, 503, 504):
-                    # Server error: exponential backoff
                     delay = min(5 * (2 ** attempt), 120)
                     logging.warning(f"Server error {response.status_code}. Retry dalam {delay}s...")
                     time.sleep(delay)
