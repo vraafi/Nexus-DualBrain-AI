@@ -20,7 +20,17 @@ cryptography==42.0.5
 # ─── Web Dashboard ───
 flask==3.0.2
 
-# ─── OpenClaw: AI Agent Gateway (integrasi Telegram + LLM routing) ───
-# Docs: https://docs.openclaw.ai | PyPI: https://pypi.org/project/openclaw-sdk/
-openclaw-sdk>=2026.3.0
+# ─── Stealth Browser (lebih baik dari playwright-stealth biasa) ───
 camoufox==0.4.11
+
+# ─── CATATAN OPENCLAW ────────────────────────────────────────────────
+# OpenClaw adalah tool Node.js, BUKAN Python package.
+# Jangan tambahkan 'openclaw-sdk' di sini.
+#
+# Cara install OpenClaw yang benar:
+#   npm install -g openclaw@latest
+#   openclaw onboard
+#
+# Docs: https://docs.openclaw.ai
+# GitHub: https://github.com/openclaw/openclaw
+# ─────────────────────────────────────────────────────────────────────
