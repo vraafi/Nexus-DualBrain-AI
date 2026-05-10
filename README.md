@@ -38,6 +38,8 @@ dioptimalkan untuk hardware terbatas: **Intel i3 Gen 8 · 8GB RAM · 256GB SSD**
 
 ## Cara Install & Jalankan
 
+> **Pengguna Windows?** Lihat [Panduan Setup untuk Windows (Pemula)](WINDOWS_SETUP_GUIDE.md) menggunakan WSL2.
+
 ### 1. Persiapan sistem
 
 ```bash
