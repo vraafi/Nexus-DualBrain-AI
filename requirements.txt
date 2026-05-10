@@ -34,3 +34,4 @@ camoufox==0.4.11
 # Docs: https://docs.openclaw.ai
 # GitHub: https://github.com/openclaw/openclaw
 # ─────────────────────────────────────────────────────────────────────
+setuptools

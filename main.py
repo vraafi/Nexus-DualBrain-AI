@@ -44,10 +44,10 @@ from financial_tracker import FinancialTracker
 from client_memory import ClientMemory
 from openclaw_agent import OpenClawAgent
 
-    load_dotenv()
+load_dotenv()
 
-    RESIDENTIAL_PROXIES_STR = os.environ.get("RESIDENTIAL_PROXIES", "")
-    RESIDENTIAL_PROXIES = [p.strip() for p in RESIDENTIAL_PROXIES_STR.split(",") if p.strip()]
+RESIDENTIAL_PROXIES_STR = os.environ.get("RESIDENTIAL_PROXIES", "")
+RESIDENTIAL_PROXIES = [p.strip() for p in RESIDENTIAL_PROXIES_STR.split(",") if p.strip()]
 
 
 # ─── LOGGING ───
