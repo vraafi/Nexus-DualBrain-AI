@@ -62,7 +62,27 @@ def generate_code(job_id, title, description, platform, retry=False, feedback=""
     elif "```" in code:
         code = code.split("```")[1].strip()
 
-    code_path = os.path.join(OUTPUT_DIR, f"{job_id}_code.py")
+    # Customer repository integration using Jules CLI and Github CLI
+    # Generate repository name: py001 [c001] py
+    import subprocess
+
+
+    repo_name = f"py{job_id[-3:] if len(job_id) >= 3 else '001'} [c{job_id[:3] if len(job_id) >= 3 else '001'}] py"
+    # GitHub repository names cannot have spaces or brackets. Sanitize it for GH but keep display name.
+    gh_repo_name = repo_name.replace(" ", "-").replace("[", "").replace("]", "")
+    repo_path = os.path.join(OUTPUT_DIR, repo_name)
+
+    # Ensure the target directory exists and is empty
+    if not os.path.exists(repo_path):
+        os.makedirs(repo_path, exist_ok=True)
+
+    # Create the repository folder using jules cli
+    try:
+        subprocess.run(["jules", "repo", "create", repo_path], check=True)
+    except Exception as e:
+        logging.warning(f"Jules CLI failed: {e}. Proceeding with standard directory.")
+
+    code_path = os.path.join(repo_path, f"{job_id}_code.py")
     with open(code_path, "w") as f:
         f.write(code)
 
@@ -75,11 +95,23 @@ def generate_code(job_id, title, description, platform, retry=False, feedback=""
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "status": "CODE_READY"
     }
-    meta_path = os.path.join(OUTPUT_DIR, f"{job_id}_meta.json")
+    meta_path = os.path.join(repo_path, f"{job_id}_meta.json")
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
 
     logging.info(f"[CodeGen] Code saved to {code_path}")
+    try:
+        # Initialize a new git repository
+        subprocess.run(["git", "init"], cwd=repo_path, check=True)
+        # Try github cli to create the repository and push
+        subprocess.run(["gh", "repo", "create", gh_repo_name, "--private", "--source", ".", "--remote", "origin"],
+                       cwd=repo_path, check=True)
+        subprocess.run(["git", "add", "."], cwd=repo_path, check=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo_path, check=True)
+        subprocess.run(["git", "push", "-u", "origin", "HEAD"], cwd=repo_path, check=True)
+    except Exception as e:
+        logging.warning(f"GitHub CLI / Git failed: {e}.")
+
     print(json.dumps({"status": "success", "code_path": code_path, "meta_path": meta_path}))
     return True
 
