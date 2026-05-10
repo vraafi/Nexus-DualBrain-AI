@@ -42,6 +42,12 @@ class FreelanceAgent:
             if "login" in page.url or "challenge" in page.url:
                 logging.warning("Manual intervention required for login (2FA/Captcha).")
                 page.wait_for_timeout(15000)
+                page.screenshot(path="captcha_challenge.png")
+                from telegram_agent import TelegramAgent
+                import os
+                bot = TelegramAgent(os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID"))
+                bot.send_photo("captcha_challenge.png", caption="[TINDAKAN DIPERLUKAN] AI terhenti di halaman login. Tolong selesaikan CAPTCHA atau OTP. Buka browser secara manual di komputermu, login ke Upwork dengan akun yang sama, lalu tekan ENTER di terminal ini jika sudah berhasil masuk.")
+                input("\n[!!!] Buka browser aslimu, login ke Upwork untuk memecahkan CAPTCHA/OTP, lalu tekan ENTER di sini untuk melanjutkan... ")
                 if "login" in page.url or "challenge" in page.url:
                     logging.error("Failed to bypass login wall.")
                     return False
