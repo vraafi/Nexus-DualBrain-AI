@@ -88,9 +88,14 @@ Pastikan kamu masuk ke dalam folder AI Agent di terminal Ubuntu.
    ```
    Tunggu sampai semuanya selesai.
 
-2. Instal browser Chromium khusus yang digunakan AI untuk berselancar di internet:
+5. Instal browser Chromium khusus yang digunakan AI untuk berselancar di internet:
    ```bash
    playwright install chromium
+   ```
+
+6. Instal komponen sistem operasi tambahan yang dibutuhkan oleh browser:
+   ```bash
+   sudo apt-get install -y libnss3 libnspr4 libasound2t64
    ```
 
 ## Langkah 6: Konfigurasi AI Agent (Penting!)
