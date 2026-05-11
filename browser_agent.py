@@ -27,7 +27,21 @@ class BrowserAgent:
         self.headless = headless
         self.proxy = proxy
         self.use_camoufox = use_camoufox and CAMOUFOX_AVAILABLE
+
+        # In WSL2, localhost refers to the Linux VM itself. We need the Windows Host IP.
         self.endpoint_url = endpoint_url
+        if "localhost" in self.endpoint_url or "127.0.0.1" in self.endpoint_url:
+            try:
+                # Get default gateway (Windows host IP) from WSL
+                with open("/etc/resolv.conf", "r") as f:
+                    for line in f:
+                        if line.startswith("nameserver"):
+                            host_ip = line.strip().split()[1]
+                            self.endpoint_url = self.endpoint_url.replace("localhost", host_ip).replace("127.0.0.1", host_ip)
+                            break
+            except Exception as e:
+                logging.warning(f"Could not resolve WSL host IP, leaving endpoint as {self.endpoint_url}: {e}")
+
         self.playwright = None
         self.browser = None
         self.context = None
