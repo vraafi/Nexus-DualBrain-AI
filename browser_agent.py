@@ -3,6 +3,7 @@ import logging
 import time
 import random
 import os
+import subprocess
 from playwright.sync_api import sync_playwright
 from playwright_stealth import stealth_sync
 
@@ -54,6 +55,13 @@ class BrowserAgent:
             if self.endpoint_url:
                 try:
                     logging.info(f"Mencoba koneksi remote debugging ke {self.endpoint_url}...")
+                    try:
+                        logging.info("Mencoba menjalankan Brave browser di host Windows...")
+                        subprocess.run(["cmd.exe", "/c", "start", "brave", "--remote-debugging-port=9222"], check=False)
+                        time.sleep(3)
+                    except Exception as cmd_err:
+                        logging.warning(f"Gagal memanggil cmd.exe untuk Brave: {cmd_err}")
+
                     self.playwright = sync_playwright().start()
                     self.browser = self.playwright.chromium.connect_over_cdp(self.endpoint_url)
                     self.context = self.browser.contexts[0]
