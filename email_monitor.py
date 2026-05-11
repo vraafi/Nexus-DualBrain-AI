@@ -8,6 +8,7 @@ Berjalan di background thread terpisah agar tidak menghentikan workflow utama.
 
 import imaplib
 import email
+import email.message
 import logging
 import threading
 import time
