@@ -23,10 +23,11 @@ except ImportError:
     logging.warning("python-ghost-cursor tidak tersedia. Fallback ke standard click.")
 
 class BrowserAgent:
-    def __init__(self, headless=False, use_camoufox=True, proxy=None):
+    def __init__(self, headless=False, use_camoufox=True, proxy=None, endpoint_url="http://localhost:9222"):
         self.headless = headless
         self.proxy = proxy
         self.use_camoufox = use_camoufox and CAMOUFOX_AVAILABLE
+        self.endpoint_url = endpoint_url
         self.playwright = None
         self.browser = None
         self.context = None
@@ -35,6 +36,36 @@ class BrowserAgent:
 
     def _init_browser(self):
         try:
+            # 1. Coba koneksi ke browser Windows via CDP (Remote Debugging) jika endpoint_url di-set
+            if self.endpoint_url:
+                try:
+                    logging.info(f"Mencoba koneksi remote debugging ke {self.endpoint_url}...")
+                    self.playwright = sync_playwright().start()
+                    self.browser = self.playwright.chromium.connect_over_cdp(self.endpoint_url)
+                    self.context = self.browser.contexts[0]
+                    self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
+
+                    self.page.set_default_timeout(60000)
+                    logging.info(f"Berhasil terhubung ke browser remote: {self.endpoint_url}")
+
+                    # Coba inisialisasi ghost cursor untuk remote browser
+                    if GHOST_CURSOR_AVAILABLE:
+                        try:
+                            self.cursor = create_cursor(self.page)
+                        except Exception as e:
+                            logging.warning(f"Ghost cursor gagal init pada remote browser: {e}")
+                            self.cursor = None
+                    else:
+                        self.cursor = None
+                    return # Sukses connect, langsung return agar tidak menjalankan fallback
+                except Exception as e:
+                    logging.warning(f"Gagal koneksi ke remote browser di {self.endpoint_url}: {e}. Fallback ke browser lokal.")
+                    # Reset playwright agar bisa inisialisasi ulang di blok fallback
+                    if self.playwright:
+                        self.playwright.stop()
+                        self.playwright = None
+
+            # 2. Fallback: Gunakan Camoufox (Jika tersedia & dipilih) atau Playwright Standar
             if self.use_camoufox:
                 logging.info("Initializing browser with Camoufox...")
                 self.browser = Camoufox(
