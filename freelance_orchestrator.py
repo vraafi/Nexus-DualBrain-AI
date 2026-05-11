@@ -176,82 +176,95 @@ class FreelanceOrchestrator:
         return t
 
     def _search_jobs(self, platform: str, stop: threading.Event):
-        """Aktif cari dan apply job selama jam shift berlangsung."""
+        """Aktif cari dan apply job selama jam shift berlangsung.
+
+        PENTING: Playwright sync API terikat ke thread yang membuatnya.
+        Thread ini membuat koneksi CDP-nya sendiri agar tidak crash
+        dengan error 'cannot switch to a different thread'.
+        """
+        import random
+        from browser_agent import BrowserAgent
+        from freelance_agent import FreelanceAgent
+        from fiverr_agent import FiverrAgent
+        from x_agent import XAgent
+
         applied = 0
         branding = self.branding.get(platform, {})
 
-        while get_current_platform() == platform and not stop.is_set():
-            try:
-                cb = self.circuit_breakers.get(platform)
+        # Buat koneksi browser baru khusus untuk thread ini
+        thread_browser = BrowserAgent(endpoint_url=self.browser._base_url)
+        try:
+            thread_browser._init_browser()
+        except Exception as e:
+            logger.error("[Search-%s] Gagal init browser di thread: %s", platform, e)
+            return
 
-                def run_platform_logic():
-                    nonlocal applied
-                    if platform == "upwork":
-                        with self._browser_lock:
-                            jobs = self._upwork_agent.scrape_jobs()
-                        if jobs:
-                            with self._browser_lock:
-                                filtered = self._upwork_agent.filter_jobs_batch(jobs)
-                            for job in filtered[:2]:
-                                if stop.is_set():
-                                    break
-                                with self._browser_lock:
-                                    success = self._upwork_agent.submit_proposal(job, branding)
-                                if success:
-                                    applied += 1
-                                    self.finance.log_proposal("upwork", job.get("title"), 50.0)
-                                time.sleep(30)
+        thread_upwork = FreelanceAgent(thread_browser, self.llm)
+        thread_fiverr = FiverrAgent(thread_browser, self.llm)
+        thread_x = XAgent(thread_browser, self.llm)
 
-                    elif platform == "fiverr":
-                        # 1. Cek Order Fiverr
-                        with self._browser_lock:
-                            orders = self._fiverr_agent.check_active_orders()
-
-                        fiverr_activity_found = False
-                        if orders:
-                            logger.info("[Fiverr] %d order aktif ditemukan.", len(orders))
-                            fiverr_activity_found = True
-
-                        # 2. Cari pekerjaan di Fiverr (Buyer Requests / Promoted)
-                        with self._browser_lock:
-                            # Asumsi fungsi fiverr mereturn boolean atau int activity,
-                            # kita treat eksekusi ini sebagai indikator fiverr berjalan
-                            self._fiverr_agent.search_and_offer_gigs()
-
-                        # Jika dirasa tidak ada order aktif, fallback ke X
-                        if not fiverr_activity_found:
-                            logger.info("[Fiverr] Tidak ada aktivitas, fallback ke X (Twitter)...")
-                            with self._browser_lock:
-                                import random
-                                # Login X
-                                self._x_agent.login_x()
-
-                                # Probabilitas 30% untuk posting berita tekno lucu, sisanya cari job
-                                if random.random() < 0.3:
-                                    self._x_agent.post_tech_news()
-                                else:
-                                    self._x_agent.search_and_reply_jobs()
-
+        try:
+            while get_current_platform() == platform and not stop.is_set():
                 try:
-                    if cb:
-                        cb.call(run_platform_logic)
-                    else:
-                        run_platform_logic()
-                except Exception as e:
-                    logger.error(f"[Orchestrator] Error for {platform}: {e}")
-                    self.error_learner.record_error(platform, type(e).__name__, str(e))
-                    time.sleep(60)
+                    cb = self.circuit_breakers.get(platform)
 
-                # Jeda 10 menit antar siklus pencarian
-                idle_wait = 0
-                while idle_wait < 600 and not stop.is_set():
-                    time.sleep(10)
-                    idle_wait += 10
+                    def run_platform_logic():
+                        nonlocal applied
+                        if platform == "upwork":
+                            jobs = thread_upwork.scrape_jobs()
+                            if jobs:
+                                filtered = thread_upwork.filter_jobs_batch(jobs)
+                                for job in filtered[:2]:
+                                    if stop.is_set():
+                                        break
+                                    success = thread_upwork.submit_proposal(job, branding)
+                                    if success:
+                                        applied += 1
+                                        self.finance.log_proposal("upwork", job.get("title"), 50.0)
+                                    time.sleep(30)
 
-            except Exception as exc:
-                logger.error("[Search-%s] Error: %s", platform, exc)
-                if not stop.is_set():
-                    time.sleep(60)
+                        elif platform == "fiverr":
+                            orders = thread_fiverr.check_active_orders()
+                            fiverr_activity_found = bool(orders)
+                            if orders:
+                                logger.info("[Fiverr] %d order aktif ditemukan.", len(orders))
+
+                            thread_fiverr.search_and_offer_gigs()
+
+                            if not fiverr_activity_found:
+                                logger.info("[Fiverr] Tidak ada aktivitas, fallback ke X (Twitter)...")
+                                thread_x.login_x()
+                                if random.random() < 0.3:
+                                    thread_x.post_tech_news()
+                                else:
+                                    thread_x.search_and_reply_jobs()
+
+                    try:
+                        if cb:
+                            cb.call(run_platform_logic)
+                        else:
+                            run_platform_logic()
+                    except Exception as e:
+                        logger.error(f"[Orchestrator] Error for {platform}: {e}")
+                        self.error_learner.record_error(platform, type(e).__name__, str(e))
+                        time.sleep(60)
+
+                    # Jeda 10 menit antar siklus pencarian
+                    idle_wait = 0
+                    while idle_wait < 600 and not stop.is_set():
+                        time.sleep(10)
+                        idle_wait += 10
+
+                except Exception as exc:
+                    logger.error("[Search-%s] Error: %s", platform, exc)
+                    if not stop.is_set():
+                        time.sleep(60)
+
+        finally:
+            try:
+                thread_browser.quit()
+            except Exception:
+                pass
 
         logger.info("[Search-%s] Selesai. Applied: %d job.", platform.upper(), applied)
 
