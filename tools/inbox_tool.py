@@ -35,7 +35,7 @@ def check_new_messages(platform="all"):
 
     for p in platforms_to_check:
         try:
-            with BrowserAgent(headless=False) as browser:
+            with BrowserAgent(headless=False, endpoint_url="http://localhost:9222") as browser:
                 if p == "upwork":
                     from freelance_agent import FreelanceAgent
                     agent = FreelanceAgent(browser, load_gemini_client())
@@ -71,7 +71,7 @@ def check_new_messages(platform="all"):
 def send_reply(platform, thread_id, message):
     """Kirim reply ke thread tertentu."""
     try:
-        with BrowserAgent(headless=False) as browser:
+        with BrowserAgent(headless=False, endpoint_url="http://localhost:9222") as browser:
             llm = load_gemini_client()
             if platform == "upwork":
                 from freelance_agent import FreelanceAgent

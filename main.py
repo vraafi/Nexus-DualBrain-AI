@@ -146,13 +146,13 @@ def run_workflow(openclaw, finance, llm, branding_strategies, memory):
             wait_for_resources()
             save_state(task_id, "RUNNING", "inbox_monitor_phase", {})
             current_proxy = get_next_proxy(RESIDENTIAL_PROXIES)
-            with BrowserAgent(headless=False, proxy=current_proxy) as browser:
+            with BrowserAgent(headless=False, proxy=current_proxy, endpoint_url="http://localhost:9222") as browser:
                 agent = FreelanceAgent(browser, llm)
                 login_ok = agent.login_upwork()
             gc.collect()
             if login_ok:
                 current_proxy = get_next_proxy(RESIDENTIAL_PROXIES)
-                with BrowserAgent(headless=False, proxy=current_proxy) as browser:
+                with BrowserAgent(headless=False, proxy=current_proxy, endpoint_url="http://localhost:9222") as browser:
                     agent = FreelanceAgent(browser, llm)
                     state, job_data = agent.check_messages_and_negotiate()
                 gc.collect()
@@ -173,7 +173,7 @@ def run_workflow(openclaw, finance, llm, branding_strategies, memory):
             wait_for_resources()
             save_state(task_id, "RUNNING", "freelance_phase", {})
             current_proxy = get_next_proxy(RESIDENTIAL_PROXIES)
-            with BrowserAgent(headless=False, proxy=current_proxy) as browser:
+            with BrowserAgent(headless=False, proxy=current_proxy, endpoint_url="http://localhost:9222") as browser:
                 orchestrator = FreelanceOrchestrator(
                     browser_agent=browser, llm_client=llm,
                     branding_strategies=branding_strategies
@@ -261,7 +261,7 @@ def run_workflow(openclaw, finance, llm, branding_strategies, memory):
                        {"job_data": job_data, "code_path": code_path})
             delivered = False
             current_proxy = get_next_proxy(RESIDENTIAL_PROXIES)
-            with BrowserAgent(headless=False, proxy=current_proxy) as browser:
+            with BrowserAgent(headless=False, proxy=current_proxy, endpoint_url="http://localhost:9222") as browser:
                 if platform == "upwork":
                     agent = FreelanceAgent(browser, llm)
                     delivered = agent.deliver_work(job_data, code_path)
