@@ -4,17 +4,7 @@ import time
 import random
 import os
 from playwright.sync_api import sync_playwright
-from playwright_stealth import stealth_sync
 
-# Mencoba import Camoufox untuk stealth yang lebih baik
-try:
-    from camoufox.sync_api import Camoufox
-    CAMOUFOX_AVAILABLE = True
-except ImportError:
-    CAMOUFOX_AVAILABLE = False
-    logging.warning("Camoufox tidak tersedia. Menggunakan Playwright standar.")
-
-# Fallback aman jika python-ghost-cursor tidak bisa diinstall
 try:
     from python_ghost_cursor.playwright_sync import create_cursor
     GHOST_CURSOR_AVAILABLE = True
@@ -22,25 +12,50 @@ except ImportError:
     GHOST_CURSOR_AVAILABLE = False
     logging.warning("python-ghost-cursor tidak tersedia. Fallback ke standard click.")
 
-class BrowserAgent:
-    def __init__(self, headless=False, use_camoufox=True, proxy=None, endpoint_url="http://localhost:9222"):
-        self.headless = headless
-        self.proxy = proxy
-        self.use_camoufox = use_camoufox and CAMOUFOX_AVAILABLE
 
-        # In WSL2, localhost refers to the Linux VM itself. We need the Windows Host IP.
-        self.endpoint_url = endpoint_url
-        if "localhost" in self.endpoint_url or "127.0.0.1" in self.endpoint_url:
-            try:
-                # Get default gateway (Windows host IP) from WSL
-                with open("/etc/resolv.conf", "r") as f:
-                    for line in f:
-                        if line.startswith("nameserver"):
-                            host_ip = line.strip().split()[1]
-                            self.endpoint_url = self.endpoint_url.replace("localhost", host_ip).replace("127.0.0.1", host_ip)
-                            break
-            except Exception as e:
-                logging.warning(f"Could not resolve WSL host IP, leaving endpoint as {self.endpoint_url}: {e}")
+def _resolve_brave_cdp_url(endpoint_url: str) -> str:
+    """
+    Resolusi URL CDP Brave.
+    - Jika di-override via env BRAVE_CDP_URL, gunakan itu.
+    - Jika berjalan di WSL2, ganti localhost/127.0.0.1 dengan IP Windows host
+      yang dibaca dari /etc/resolv.conf (nameserver WSL2 = IP host Windows).
+    - Selain itu, kembalikan URL apa adanya.
+    """
+    override = os.environ.get("BRAVE_CDP_URL", "").strip()
+    if override:
+        logging.info(f"BRAVE_CDP_URL dari env: {override}")
+        return override
+
+    if "localhost" in endpoint_url or "127.0.0.1" in endpoint_url:
+        try:
+            with open("/etc/resolv.conf", "r") as f:
+                for line in f:
+                    if line.startswith("nameserver"):
+                        host_ip = line.strip().split()[1]
+                        resolved = endpoint_url.replace("localhost", host_ip).replace("127.0.0.1", host_ip)
+                        logging.info(f"WSL2 terdeteksi. Endpoint CDP → {resolved}")
+                        return resolved
+        except Exception as e:
+            logging.warning(f"Gagal baca /etc/resolv.conf: {e}. Menggunakan endpoint asli.")
+
+    return endpoint_url
+
+
+class BrowserAgent:
+    """
+    Agent browser yang HANYA terhubung ke Brave via CDP (Remote Debugging).
+
+    Sebelum menjalankan agent, pastikan Brave sudah dibuka di Windows dengan:
+        cmd /c start brave --remote-debugging-port=9222
+
+    Atau atur BRAVE_CDP_URL di .env jika port/host berbeda.
+    Default endpoint: http://localhost:9222 (otomatis dikonversi ke IP Windows di WSL2).
+    """
+
+    def __init__(self, headless=False, use_camoufox=False, proxy=None,
+                 endpoint_url="http://localhost:9222"):
+        self.proxy = proxy
+        self.endpoint_url = _resolve_brave_cdp_url(endpoint_url)
 
         self.playwright = None
         self.browser = None
@@ -49,73 +64,24 @@ class BrowserAgent:
         self.cursor = None
 
     def _init_browser(self):
+        logging.info(f"Menghubungkan ke Brave via CDP: {self.endpoint_url}")
+        logging.info("Pastikan Brave sudah berjalan dengan:")
+        logging.info("  cmd /c start brave --remote-debugging-port=9222")
+
         try:
-            # 1. Coba koneksi ke browser Windows via CDP (Remote Debugging) jika endpoint_url di-set
-            if self.endpoint_url:
-                try:
-                    logging.info(f"Mencoba koneksi remote debugging ke {self.endpoint_url}...")
-                    self.playwright = sync_playwright().start()
-                    self.browser = self.playwright.chromium.connect_over_cdp(self.endpoint_url)
-                    self.context = self.browser.contexts[0]
-                    self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
+            self.playwright = sync_playwright().start()
+            self.browser = self.playwright.chromium.connect_over_cdp(self.endpoint_url)
 
-                    self.page.set_default_timeout(60000)
-                    logging.info(f"Berhasil terhubung ke browser remote: {self.endpoint_url}")
-
-                    # Coba inisialisasi ghost cursor untuk remote browser
-                    if GHOST_CURSOR_AVAILABLE:
-                        try:
-                            self.cursor = create_cursor(self.page)
-                        except Exception as e:
-                            logging.warning(f"Ghost cursor gagal init pada remote browser: {e}")
-                            self.cursor = None
-                    else:
-                        self.cursor = None
-                    return # Sukses connect, langsung return agar tidak menjalankan fallback
-                except Exception as e:
-                    logging.warning(f"Gagal koneksi ke remote browser di {self.endpoint_url}: {e}. Fallback ke browser lokal.")
-                    # Reset playwright agar bisa inisialisasi ulang di blok fallback
-                    if self.playwright:
-                        self.playwright.stop()
-                        self.playwright = None
-
-            # 2. Fallback: Gunakan Camoufox (Jika tersedia & dipilih) atau Playwright Standar
-            if self.use_camoufox:
-                logging.info("Initializing browser with Camoufox...")
-                self.browser = Camoufox(
-                    headless=self.headless,
-                    humanize=True,
-                    # Proxy sangat disarankan untuk Camoufox, tapi kita biarkan opsional
-                    proxy=self.proxy
+            if not self.browser.contexts:
+                raise RuntimeError(
+                    "Brave terhubung tapi tidak ada context/tab aktif. "
+                    "Buka minimal satu tab di Brave, lalu coba lagi."
                 )
-                self.context = self.browser.start()
-                self.page = self.context.new_page()
-            else:
-                self.playwright = sync_playwright().start()
-                user_data_dir = "./browser_profile"
 
-                self.context = self.playwright.chromium.launch_persistent_context(
-                    user_data_dir=user_data_dir,
-                    headless=self.headless,
-                    args=[
-                        "--disable-gpu",
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--single-process",
-                        "--disable-blink-features=AutomationControlled"
-                    ],
-                    no_viewport=True
-                )
-                self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
+            self.context = self.browser.contexts[0]
+            self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
+            self.page.set_default_timeout(60000)
 
-                init_scripts = """
-                    Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-                    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
-                """
-                self.page.add_init_script(init_scripts)
-                stealth_sync(self.page)
-
-            # Inisialisasi ghost cursor dengan fallback
             if GHOST_CURSOR_AVAILABLE:
                 try:
                     self.cursor = create_cursor(self.page)
@@ -125,11 +91,33 @@ class BrowserAgent:
             else:
                 self.cursor = None
 
-            self.page.set_default_timeout(60000)
-            logging.info(f"Browser initialized (Camoufox={self.use_camoufox}, headless={self.headless}, ghost_cursor={self.cursor is not None}).")
+            logging.info(f"Berhasil terhubung ke Brave. Tab aktif: {self.page.url}")
+
         except Exception as e:
-            logging.error(f"Failed to init browser: {e}")
-            self.quit()
+            self._cleanup_playwright()
+            raise RuntimeError(
+                f"Gagal konek ke Brave di {self.endpoint_url}.\n"
+                f"Error: {e}\n\n"
+                f"Solusi:\n"
+                f"  1. Tutup semua proses Brave yang sedang berjalan.\n"
+                f"  2. Buka Brave dengan perintah berikut di CMD Windows:\n"
+                f"       cmd /c start brave --remote-debugging-port=9222\n"
+                f"  3. Tunggu Brave terbuka, lalu jalankan agent lagi.\n"
+                f"  4. Atau atur BRAVE_CDP_URL di file .env jika menggunakan port lain."
+            ) from e
+
+    def _cleanup_playwright(self):
+        try:
+            if self.playwright:
+                self.playwright.stop()
+        except Exception:
+            pass
+        finally:
+            self.playwright = None
+            self.browser = None
+            self.context = None
+            self.page = None
+            self.cursor = None
 
     def _human_delay(self, min_ms=1000, max_ms=3000):
         delay = random.uniform(min_ms, max_ms)
@@ -175,20 +163,14 @@ class BrowserAgent:
 
     def quit(self):
         try:
-            if self.use_camoufox and self.browser:
-                self.context.close()
-            elif self.context:
+            if self.context:
                 self.context.close()
         except Exception as e:
-            logging.error(f"Error closing browser/context: {e}")
+            logging.error(f"Error closing context: {e}")
         finally:
-            self.page = None
-            self.context = None
-            self.browser = None
-            self.playwright = None
-            self.cursor = None
+            self._cleanup_playwright()
             gc.collect()
-            logging.info("Browser closed and memory cleared.")
+            logging.info("Koneksi CDP ke Brave ditutup dan memori dibersihkan.")
 
     def __enter__(self):
         self._init_browser()
