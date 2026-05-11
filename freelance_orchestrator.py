@@ -195,6 +195,11 @@ class FreelanceOrchestrator:
         thread_browser = BrowserAgent(endpoint_url=self.browser._base_url)
         try:
             thread_browser._init_browser()
+            # Buka tab BARU agar tidak bentrok dengan MainThread yang pakai pages[0]
+            # Dua koneksi CDP ke tab yang sama akan saling blok dan browser diam
+            thread_browser.page = thread_browser.context.new_page()
+            thread_browser.page.set_default_timeout(60000)
+            logger.info("[Search-%s] Tab baru dibuka untuk thread ini.", platform)
         except Exception as e:
             logger.error("[Search-%s] Gagal init browser di thread: %s", platform, e)
             return
