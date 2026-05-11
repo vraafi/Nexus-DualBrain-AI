@@ -76,7 +76,7 @@ def search_and_filter_jobs():
     filtered_jobs = []
 
     try:
-        with BrowserAgent(headless=True) as browser:
+        with BrowserAgent(headless=False) as browser:
             agent = FreelanceAgent(browser, llm)
 
             # Login Upwork

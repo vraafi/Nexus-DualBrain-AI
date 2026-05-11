@@ -29,7 +29,7 @@ def check_active_orders():
     llm = load_gemini_client()
     orders = []
     try:
-        with BrowserAgent(headless=True) as browser:
+        with BrowserAgent(headless=False) as browser:
             agent = FiverrAgent(browser, llm)
             if not agent.login_fiverr():
                 print(json.dumps({"status": "error", "message": "Login Fiverr gagal"}))
@@ -48,7 +48,7 @@ def check_active_orders():
 def reply_to_order(order_id, message):
     llm = load_gemini_client()
     try:
-        with BrowserAgent(headless=True) as browser:
+        with BrowserAgent(headless=False) as browser:
             agent = FiverrAgent(browser, llm)
             if not agent.login_fiverr():
                 print(json.dumps({"status": "error", "message": "Login gagal"}))

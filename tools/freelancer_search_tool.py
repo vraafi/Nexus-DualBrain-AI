@@ -28,7 +28,7 @@ def search_jobs():
     llm = load_gemini_client()
     jobs = []
     try:
-        with BrowserAgent(headless=True) as browser:
+        with BrowserAgent(headless=False) as browser:
             agent = FreelancerAgent(browser, llm)
             if not agent.login_freelancer():
                 print(json.dumps({"status": "error", "message": "Login Freelancer gagal"}))
