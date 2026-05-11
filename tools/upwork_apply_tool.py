@@ -24,7 +24,7 @@ def load_gemini_client():
 def submit_proposal(job_id, proposal):
     llm = load_gemini_client()
     try:
-        with BrowserAgent(headless=True) as browser:
+        with BrowserAgent(headless=False) as browser:
             agent = FreelanceAgent(browser, llm)
             if not agent.login_upwork():
                 print(json.dumps({"status": "error", "message": "Login gagal"}))

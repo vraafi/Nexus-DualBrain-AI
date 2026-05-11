@@ -47,7 +47,7 @@ def deliver_work(platform, job_id, order_id, code_path, message, retry=False):
         return False
 
     try:
-        with BrowserAgent(headless=True) as browser:
+        with BrowserAgent(headless=False) as browser:
             llm = load_gemini_client()
             delivered = False
 

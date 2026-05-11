@@ -24,7 +24,7 @@ def load_gemini_client():
 def submit_bid(job_id, bid_amount, proposal):
     llm = load_gemini_client()
     try:
-        with BrowserAgent(headless=True) as browser:
+        with BrowserAgent(headless=False) as browser:
             agent = FreelancerAgent(browser, llm)
             if not agent.login_freelancer():
                 print(json.dumps({"status": "error", "message": "Login gagal"}))
