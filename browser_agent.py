@@ -253,10 +253,10 @@ class BrowserAgent:
 
     def quit(self):
         try:
-            if self.context:
-                self.context.close()
+            if self.page:
+                self.page.close()
         except Exception as e:
-            logging.error(f"Error closing context: {e}")
+            logging.error(f"Error closing page: {e}")
         finally:
             self._cleanup_playwright()
             gc.collect()

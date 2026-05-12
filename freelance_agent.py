@@ -143,12 +143,20 @@ class FreelanceAgent:
         approved_jobs = []
         if response:
             try:
-                if "```json" in response:
-                    response = response.split("```json")[1].split("```")[0].strip()
-                elif "```" in response:
-                    response = response.split("```")[1].strip()
+                import re
+                # Use non-greedy match to avoid catching stray brackets at the end
+                match = re.search(r'\[.*?\]', response, re.DOTALL)
+                if match:
+                    clean_response = match.group(0)
+                else:
+                    if "```json" in response:
+                        clean_response = response.split("```json")[1].split("```")[0].strip()
+                    elif "```" in response:
+                        clean_response = response.split("```")[1].strip()
+                    else:
+                        clean_response = response
 
-                evaluations = json.loads(response)
+                evaluations = json.loads(clean_response)
                 for eval_obj in evaluations:
                     if eval_obj.get("is_autonomous"):
                         idx = eval_obj.get("index")
