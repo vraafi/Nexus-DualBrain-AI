@@ -244,9 +244,27 @@ def run_workflow(openclaw, finance, llm, branding_strategies, memory):
             wait_for_resources()
             save_state(task_id, "RUNNING", "sandbox_phase", {"code": code_path})
             sandbox = SandboxTester(duration_minutes=15, llm_client=llm)
-            passed = bool(sandbox.test_code(code_path))
-            if not passed:
-                openclaw.send_message("⚠️ Sandbox gagal 7x. Kembali ke pencarian job.")
+            sandbox_result = sandbox.test_code(code_path)
+
+            if not sandbox_result:
+                # Sandbox failed — check if an apology file was written by the sandbox
+                apology_file = "apology_message.txt"
+                if os.path.exists(apology_file):
+                    try:
+                        with open(apology_file, "r") as f:
+                            apology_text = f.read().strip()
+                        if apology_text:
+                            openclaw.send_message(
+                                f"⚠️ Sandbox gagal 7x. Apology untuk klien:\n\n{apology_text}"
+                            )
+                        # Clean up the apology file after sending
+                        os.remove(apology_file)
+                    except Exception as read_err:
+                        logging.error("Gagal baca/kirim apology file: %s", read_err)
+                else:
+                    openclaw.send_message("⚠️ Sandbox gagal. Kembali ke pencarian job.")
+
+                save_state(task_id, "FAILED", "sandbox_failed", {"code": code_path})
                 return SLEEP_DURATION_SHORT
             current_step = "delivery_phase"
 
