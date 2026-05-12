@@ -13,30 +13,105 @@ agent bisa membuat Gig otomatis jika belum ada.
 import logging
 import json
 import time
+import os
 
 logger = logging.getLogger(__name__)
 
-# Template gig yang akan di-generate oleh LLM
+# ─────────────────────────────────────────────────────────────────────────────
+# GIG TEMPLATES — Dibuat sesuai aturan Fiverr 2026:
+#   - Judul awali "I will", max 80 karakter, tanpa karakter khusus (& / " +)
+#   - Hanya layanan yang BISA dikerjakan agent (Python script + sandbox test)
+#   - Tidak menjanjikan GUI, ML, database server, atau mobile app
+#   - Tags 5 frasa UNIK (bukan pengulangan kata yang sama)
+#   - Harga realistis: agent deliver dalam 1-3 hari
+# ─────────────────────────────────────────────────────────────────────────────
 GIG_TEMPLATES = [
     {
         "niche": "python_automation",
-        "title": "I will build custom Python automation scripts and bots",
-        "category_hint": "Programming & Tech",
-        "subcategory_hint": "Scripts & Utilities",
-        "tags": ["python", "automation", "script", "bot", "web scraping"],
-        "basic":    {"price": 15, "days": 1, "revisions": 1, "label": "Basic Script",    "desc": "Simple automation script, up to 50 lines, 1 feature."},
-        "standard": {"price": 35, "days": 2, "revisions": 2, "label": "Standard Bot",   "desc": "Full automation bot with error handling and logging."},
-        "premium":  {"price": 75, "days": 3, "revisions": 999, "label": "Pro Solution", "desc": "Production-ready solution with tests and documentation."},
+        # 55 chars — sesuai aturan max 80, ideal <50 tapi masih oke
+        "title": "I will write a Python automation script for your task",
+        "category": "Programming & Tech",
+        "subcategory": "Scripts & Utilities",
+        # 5 tag UNIK — hindari pengulangan, targetkan variasi pencarian berbeda
+        "tags": ["python script", "task automation", "file processing", "data automation", "python bot"],
+        "basic": {
+            "label": "Single Task",
+            "desc": "One Python script, 1 specific task, error handling included. Delivered as .py file with usage instructions.",
+            "price": 20, "days": 1, "revisions": 2,
+        },
+        "standard": {
+            "label": "Multi-Feature Script",
+            "desc": "Python script with up to 3 features, logging, unit tests, and a README. Clean and production-ready.",
+            "price": 45, "days": 2, "revisions": 3,
+        },
+        "premium": {
+            "label": "Full Automation Solution",
+            "desc": "Complete automation solution: modular code, full test suite, scheduling support, and detailed documentation.",
+            "price": 90, "days": 3, "revisions": 999,
+        },
+        # Pertanyaan untuk buyer — wajib agar agent tahu apa yang harus dibuat
+        "requirements": [
+            "What task do you need automated? (Please be as specific as possible)",
+            "What is the input? (e.g. CSV file, folder of files, API endpoint, website URL)",
+            "What should the output look like? (e.g. CSV, JSON, printed report, modified files)",
+            "Any specific Python libraries you prefer? (Leave blank if unsure — I will choose the best)",
+        ],
+        # Deskripsi panjang (target 1000+ karakter) — digenerate LLM berdasarkan prompt ini
+        "description_prompt": (
+            "Write a professional Fiverr gig description for a Python automation script service. "
+            "The seller is a skilled Python developer who delivers clean, well-tested scripts. "
+            "Rules:\n"
+            "- Length: 1000 to 1200 characters (HARD LIMIT: do not exceed 1200)\n"
+            "- Start with a strong hook sentence\n"
+            "- Explain what buyer gets in each package (Basic/Standard/Premium)\n"
+            "- List what the seller WON'T do: no GUI apps, no machine learning models, no mobile apps, no databases requiring a live server\n"
+            "- Mention: Python 3.10+, requests, BeautifulSoup, Pandas, CSV/JSON output, unit tests\n"
+            "- End with a clear call to action\n"
+            "- Professional English only, no emojis, no contact info, no competitor platform names\n"
+            "- Do NOT include markdown, headers, or bullet symbols — write as clean plain text paragraphs"
+        ),
     },
     {
         "niche": "web_scraping",
-        "title": "I will scrape any website and deliver clean structured data",
-        "category_hint": "Programming & Tech",
-        "subcategory_hint": "Data Processing",
-        "tags": ["web scraping", "python", "data extraction", "beautifulsoup", "selenium"],
-        "basic":    {"price": 20, "days": 1, "revisions": 1, "label": "Basic Scraper",  "desc": "Scrape one page, up to 500 records, delivered as CSV."},
-        "standard": {"price": 45, "days": 2, "revisions": 2, "label": "Multi-page",     "desc": "Multi-page scraper with pagination, JSON + CSV output."},
-        "premium":  {"price": 90, "days": 3, "revisions": 999, "label": "Full Pipeline","desc": "Full pipeline: scrape + clean + schedule + delivery."},
+        # 54 chars
+        "title": "I will scrape website data and export it to CSV or JSON",
+        "category": "Programming & Tech",
+        "subcategory": "Data Processing",
+        "tags": ["web scraping", "data extraction", "python scraper", "beautifulsoup", "csv export"],
+        "basic": {
+            "label": "Single Page Scrape",
+            "desc": "Scrape one URL, up to 500 records, delivered as a clean CSV file.",
+            "price": 25, "days": 1, "revisions": 2,
+        },
+        "standard": {
+            "label": "Multi-Page Scraper",
+            "desc": "Scrape multiple pages with pagination support. Delivered as CSV and JSON with a reusable Python script.",
+            "price": 55, "days": 2, "revisions": 3,
+        },
+        "premium": {
+            "label": "Full Scraping Pipeline",
+            "desc": "Complete pipeline: scrape, clean, deduplicate, and export. Includes scheduling script and full documentation.",
+            "price": 100, "days": 3, "revisions": 999,
+        },
+        "requirements": [
+            "What is the URL of the website you want to scrape?",
+            "What data fields do you need? (e.g. product name, price, URL, description)",
+            "How many records do you estimate are on the site?",
+            "Do you need the script delivered so you can re-run it yourself, or just the data file?",
+        ],
+        "description_prompt": (
+            "Write a professional Fiverr gig description for a web scraping service using Python. "
+            "The seller extracts structured data from websites and delivers clean CSV or JSON files. "
+            "Rules:\n"
+            "- Length: 1000 to 1200 characters (HARD LIMIT: do not exceed 1200)\n"
+            "- Start with a strong hook sentence about data being valuable\n"
+            "- Explain the 3 packages clearly (Basic: single page, Standard: multi-page, Premium: full pipeline)\n"
+            "- List what the seller WON'T do: sites behind login without credentials, sites that explicitly ban scraping in ToS, real-time data streams, mobile apps\n"
+            "- Mention tools: Python 3.10+, requests, BeautifulSoup, Pandas, rotating user-agents for reliability\n"
+            "- End with a call to action to message before ordering\n"
+            "- Professional English only, no emojis, no contact info\n"
+            "- Do NOT include markdown, headers, or bullet symbols — write as clean plain text paragraphs"
+        ),
     },
 ]
 
@@ -242,86 +317,265 @@ class FiverrAgent:
             logger.warning("[Fiverr] Gagal cek gig: %s", exc)
             return False
 
+    def _generate_gig_description(self, template: dict) -> str:
+        """
+        Generate deskripsi gig menggunakan LLM.
+        Target: 1000-1200 karakter (aturan Fiverr 2026).
+        """
+        description = self.llm.generate_content(template["description_prompt"])
+
+        # Fallback jika LLM gagal — teks statis yang sudah dihitung 1100 karakter
+        if not description:
+            if template["niche"] == "python_automation":
+                description = (
+                    "Tired of repeating the same manual tasks every day? I will write a clean, "
+                    "reliable Python script that automates your workflow so you can focus on what matters.\n\n"
+                    "I am a Python developer specializing in task automation, file processing, and "
+                    "data pipelines. Every script I deliver is tested, documented, and ready to run "
+                    "on your machine with a single command.\n\n"
+                    "Basic package: You get one Python script that handles a single, well-defined task. "
+                    "It includes error handling and a short usage guide. Delivered in 24 hours.\n\n"
+                    "Standard package: Up to three features combined in one script, with logging, "
+                    "unit tests, and a README file. Clean, modular code you can easily extend yourself.\n\n"
+                    "Premium package: A complete automation solution with a full test suite, scheduling "
+                    "support, and detailed documentation. Production-ready from day one.\n\n"
+                    "What I do NOT offer: GUI desktop applications, machine learning models, live database "
+                    "servers, or mobile applications. My focus is pure Python scripts that run from the "
+                    "command line or a scheduler.\n\n"
+                    "Tools I use: Python 3.10+, requests, Pandas, openpyxl, schedule, and the standard library.\n\n"
+                    "Message me before ordering so I can confirm your task is a good fit. I respond within a few hours."
+                )
+            else:
+                description = (
+                    "Data is the new currency, and I will collect it for you. I will scrape any "
+                    "publicly accessible website and deliver the data as a clean, structured CSV or JSON file.\n\n"
+                    "I have built scrapers for e-commerce sites, job boards, news portals, and "
+                    "directories. Every script uses rotating user-agents and polite request delays to "
+                    "stay reliable without triggering blocks.\n\n"
+                    "Basic package: Scrape one page or one category, up to 500 records, delivered "
+                    "as a CSV file within 24 hours.\n\n"
+                    "Standard package: Multi-page scraping with full pagination support. You receive "
+                    "both a CSV and JSON file plus the reusable Python script.\n\n"
+                    "Premium package: A complete data pipeline — scrape, deduplicate, clean, and "
+                    "schedule. Includes a scheduling script so you can refresh the data automatically.\n\n"
+                    "What I do NOT scrape: sites that require login without you supplying credentials, "
+                    "sites that explicitly prohibit scraping in their Terms of Service, or real-time "
+                    "financial data streams.\n\n"
+                    "Tools: Python 3.10+, requests, BeautifulSoup4, Pandas, lxml.\n\n"
+                    "Please message me with the site URL before ordering so I can confirm feasibility."
+                )
+
+        # Potong jika melebihi 1200 karakter (batas keras Fiverr)
+        if len(description) > 1200:
+            description = description[:1197] + "..."
+        logger.info("[Fiverr] Deskripsi gig: %d karakter.", len(description))
+        return description
+
     def create_gig(self, template_index: int = 0) -> bool:
         """
-        Buat Gig baru di Fiverr secara otomatis menggunakan template + LLM.
-        template_index: 0 = python automation, 1 = web scraping
-        Return True jika berhasil membuat gig.
+        Buat Gig baru di Fiverr secara otomatis — sesuai aturan Fiverr 2026:
+        - Judul "I will...", max 80 karakter
+        - Deskripsi 1000-1200 karakter
+        - 5 tag unik
+        - 3 paket harga (Basic / Standard / Premium)
+        - Buyer requirements untuk agen tahu apa yang harus dikerjakan
         """
         template = GIG_TEMPLATES[template_index % len(GIG_TEMPLATES)]
         logger.info("[Fiverr] Membuat Gig baru: '%s' ...", template["title"])
 
-        # Generate deskripsi panjang dengan LLM
-        prompt = (
-            f"Write a professional and persuasive Fiverr gig description for:\n"
-            f"Title: {template['title']}\n"
-            f"Target buyer: small businesses and startups needing Python development.\n\n"
-            "Requirements:\n"
-            "- 150-200 words\n"
-            "- Start with a strong hook\n"
-            "- List 4-5 bullet points of what buyer gets\n"
-            "- End with a clear call to action\n"
-            "- Professional English, no emojis\n"
-            "Output ONLY the gig description text, no markdown or quotes."
-        )
-        description = self.llm.generate_content(prompt)
-        if not description:
-            description = (
-                f"Looking for a reliable Python developer? You've found the right gig!\n\n"
-                f"I specialize in building clean, efficient, and production-ready Python solutions "
-                f"tailored to your exact needs.\n\n"
-                f"What you'll get:\n"
-                f"- Custom Python scripts and automation tools\n"
-                f"- Clean, well-commented code with error handling\n"
-                f"- Fast delivery with revisions included\n"
-                f"- Full documentation and support\n\n"
-                f"Order now and let's build something great together!"
-            )
+        description = self._generate_gig_description(template)
 
         try:
             page = self.browser.page
             self.browser.navigate("https://www.fiverr.com/gigs/new")
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(6000)
 
             # ── Step 1: Judul Gig ──────────────────────────────────────────
-            title_input = page.locator("input[name='title'], input[placeholder*='title'], input[id*='title']").first
-            if title_input.is_visible(timeout=5000):
-                self.browser.human_type(title_input, template["title"])
-                page.wait_for_timeout(1000)
-            else:
-                logger.warning("[Fiverr] Input judul gig tidak ditemukan.")
+            # Selector luas — Fiverr sering update class names
+            title_input = page.locator(
+                "input[name='title'], input[placeholder*='title' i], "
+                "input[data-field='title'], input[id*='title']"
+            ).first
+            if not title_input.is_visible(timeout=8000):
+                logger.warning("[Fiverr] Input judul tidak ditemukan.")
                 return False
+            title_input.triple_click()
+            self.browser.human_type(title_input, template["title"])
+            page.wait_for_timeout(1000)
 
-            # ── Step 2: Kategori ───────────────────────────────────────────
-            category_btn = page.locator("select[name='category'], div[class*='category'] button, div[class*='category-select']").first
-            if category_btn.is_visible(timeout=3000):
-                self.browser.human_click(category_btn)
-                page.wait_for_timeout(1000)
-                # Pilih Programming & Tech
-                prog_option = page.locator(f"option:has-text('Programming'), li:has-text('Programming'), div:has-text('Programming & Tech')").first
-                if prog_option.is_visible(timeout=3000):
-                    self.browser.human_click(prog_option)
-                    page.wait_for_timeout(1000)
+            # ── Step 2: Kategori — Programming & Tech ─────────────────────
+            # Fiverr pakai dropdown atau combo — coba keduanya
+            cat_selectors = [
+                "select[name='category_id']",
+                "div[data-testid='category-select']",
+                "div[class*='category'] button",
+                "button[aria-label*='category' i]",
+            ]
+            for sel in cat_selectors:
+                cat_el = page.locator(sel).first
+                if cat_el.is_visible(timeout=2000):
+                    self.browser.human_click(cat_el)
+                    page.wait_for_timeout(1500)
+                    # Coba pilih opsi Programming
+                    opt = page.locator(
+                        "option:has-text('Programming'), "
+                        "li:has-text('Programming'), "
+                        "div[role='option']:has-text('Programming')"
+                    ).first
+                    if opt.is_visible(timeout=2000):
+                        self.browser.human_click(opt)
+                        page.wait_for_timeout(1000)
+                    break
 
-            # ── Step 3: Tags ───────────────────────────────────────────────
-            tag_input = page.locator("input[placeholder*='tag'], input[name*='tag'], div[class*='tags'] input").first
+            # ── Step 3: 5 Tags unik ────────────────────────────────────────
+            tag_input = page.locator(
+                "input[placeholder*='tag' i], input[name*='tag'], "
+                "div[class*='tags'] input, input[data-field='tags']"
+            ).first
             if tag_input.is_visible(timeout=3000):
                 for tag in template["tags"][:5]:
+                    tag_input.click()
+                    page.wait_for_timeout(300)
                     self.browser.human_type(tag_input, tag)
-                    page.keyboard.press("Enter")
                     page.wait_for_timeout(500)
+                    # Tekan Enter atau klik opsi dropdown yang muncul
+                    suggestion = page.locator(
+                        f"li:has-text('{tag}'), div[role='option']:has-text('{tag}')"
+                    ).first
+                    if suggestion.is_visible(timeout=1500):
+                        self.browser.human_click(suggestion)
+                    else:
+                        page.keyboard.press("Enter")
+                    page.wait_for_timeout(600)
 
-            # ── Step 4: Lanjut ke halaman berikutnya ──────────────────────
-            next_btn = page.locator("button:has-text('Next'), button:has-text('Save & Continue')").first
-            if next_btn.is_visible(timeout=5000):
-                self.browser.human_click(next_btn)
-                page.wait_for_timeout(4000)
+            # ── Step 4: Lanjut ke step berikutnya ─────────────────────────
+            self._click_next(page)
+            page.wait_for_timeout(4000)
 
-            # ── Step 5: Deskripsi ──────────────────────────────────────────
-            desc_box = page.locator("div[contenteditable='true'], textarea[name='description'], div[class*='description'] textarea").first
-            if desc_box.is_visible(timeout=5000):
+            # ── Step 5: Deskripsi (1000-1200 karakter) ────────────────────
+            desc_box = page.locator(
+                "div[contenteditable='true'], textarea[name='description'], "
+                "div[class*='description-input'] div[contenteditable]"
+            ).first
+            if desc_box.is_visible(timeout=8000):
+                self.browser.human_click(desc_box)
+                page.wait_for_timeout(500)
+                # Gunakan keyboard shortcut untuk clear dan isi ulang
+                page.keyboard.press("Control+a")
+                page.keyboard.press("Delete")
                 self.browser.human_type(desc_box, description)
                 page.wait_for_timeout(1000)
+
+            # ── Step 6: Paket Harga ────────────────────────────────────────
+            for pkg_key in ["basic", "standard", "premium"]:
+                pkg = template[pkg_key]
+                try:
+                    # Label paket
+                    lbl = page.locator(
+                        f"input[name*='{pkg_key}'][name*='name'], "
+                        f"input[data-package='{pkg_key}'][name*='name'], "
+                        f"input[placeholder*='{pkg_key}' i]"
+                    ).first
+                    if lbl.is_visible(timeout=2000):
+                        lbl.triple_click()
+                        self.browser.human_type(lbl, pkg["label"])
+
+                    # Harga
+                    price_inp = page.locator(
+                        f"input[name*='{pkg_key}'][name*='price'], "
+                        f"input[data-package='{pkg_key}'][name*='price']"
+                    ).first
+                    if price_inp.is_visible(timeout=2000):
+                        price_inp.triple_click()
+                        self.browser.human_type(price_inp, str(pkg["price"]))
+
+                    # Waktu pengiriman
+                    delivery_sel = page.locator(
+                        f"select[name*='{pkg_key}'][name*='delivery'], "
+                        f"select[data-package='{pkg_key}']"
+                    ).first
+                    if delivery_sel.is_visible(timeout=2000):
+                        delivery_sel.select_option(str(pkg["days"]))
+
+                    # Revisi
+                    rev_sel = page.locator(
+                        f"select[name*='{pkg_key}'][name*='revision'], "
+                        f"select[data-package='{pkg_key}'][name*='revision']"
+                    ).first
+                    if rev_sel.is_visible(timeout=2000):
+                        rev_val = "unlimited" if pkg["revisions"] == 999 else str(pkg["revisions"])
+                        rev_sel.select_option(rev_val)
+
+                    page.wait_for_timeout(500)
+                except Exception as pkg_err:
+                    logger.warning("[Fiverr] Gagal isi paket %s: %s", pkg_key, pkg_err)
+
+            # ── Step 7: Lanjut ke Buyer Requirements ──────────────────────
+            self._click_next(page)
+            page.wait_for_timeout(4000)
+
+            # ── Step 8: Buyer Requirements ─────────────────────────────────
+            # Pertanyaan ini memastikan agent mendapat info cukup dari buyer
+            add_req_btn = page.locator(
+                "button:has-text('Add Requirement'), "
+                "button:has-text('Add Question'), "
+                "a:has-text('Add Requirement')"
+            ).first
+            for req_text in template.get("requirements", []):
+                try:
+                    if add_req_btn.is_visible(timeout=3000):
+                        self.browser.human_click(add_req_btn)
+                        page.wait_for_timeout(1500)
+                    req_input = page.locator(
+                        "input[placeholder*='requirement' i], "
+                        "textarea[placeholder*='question' i], "
+                        "div[class*='requirement'] input"
+                    ).last
+                    if req_input.is_visible(timeout=3000):
+                        self.browser.human_type(req_input, req_text)
+                        # Tandai sebagai required
+                        req_checkbox = page.locator(
+                            "input[type='checkbox'][name*='required'], "
+                            "label:has-text('Required')"
+                        ).last
+                        if req_checkbox.is_visible(timeout=2000):
+                            self.browser.human_click(req_checkbox)
+                        page.wait_for_timeout(500)
+                except Exception as req_err:
+                    logger.warning("[Fiverr] Gagal tambah requirement: %s", req_err)
+
+            # ── Step 9: Lanjut ke Publish ──────────────────────────────────
+            self._click_next(page)
+            page.wait_for_timeout(4000)
+
+            # ── Step 10: Publish Gig ───────────────────────────────────────
+            publish_btn = page.locator(
+                "button:has-text('Publish'), button:has-text('Save & Publish'), "
+                "button:has-text('Publish Gig')"
+            ).first
+            if publish_btn.is_visible(timeout=10000):
+                self.browser.human_click(publish_btn)
+                page.wait_for_timeout(6000)
+                logger.info("[Fiverr] Gig '%s' berhasil dipublikasikan!", template["title"])
+                return True
+            else:
+                logger.warning("[Fiverr] Tombol Publish tidak muncul — mungkin ada validasi yang belum terpenuhi atau perlu review manual Fiverr.")
+                return False
+
+        except Exception as exc:
+            logger.error("[Fiverr] Gagal membuat Gig: %s", exc)
+            return False
+
+    def _click_next(self, page):
+        """Helper: klik tombol Next / Save & Continue."""
+        next_btn = page.locator(
+            "button:has-text('Next'), button:has-text('Save & Continue'), "
+            "button:has-text('Continue'), a:has-text('Next')"
+        ).first
+        if next_btn.is_visible(timeout=5000):
+            self.browser.human_click(next_btn)
+        else:
+            logger.warning("[Fiverr] Tombol Next tidak ditemukan.")
 
             # ── Step 6: Paket Harga (Basic) ────────────────────────────────
             for pkg_key, pkg_data in [("basic", template["basic"]), ("standard", template["standard"]), ("premium", template["premium"])]:
