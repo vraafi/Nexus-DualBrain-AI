@@ -5,6 +5,9 @@ Agent untuk platform Fiverr: manage gig orders yang masuk,
 reply ke buyer, dan deliver hasil kerja.
 Berbeda dengan Upwork (kita apply ke job), di Fiverr kita
 menunggu order masuk ke Gig kita, lalu memprosesnya.
+
+UPDATE: Tambah check_gig_exists() dan create_gig() —
+agent bisa membuat Gig otomatis jika belum ada.
 """
 
 import logging
@@ -12,6 +15,30 @@ import json
 import time
 
 logger = logging.getLogger(__name__)
+
+# Template gig yang akan di-generate oleh LLM
+GIG_TEMPLATES = [
+    {
+        "niche": "python_automation",
+        "title": "I will build custom Python automation scripts and bots",
+        "category_hint": "Programming & Tech",
+        "subcategory_hint": "Scripts & Utilities",
+        "tags": ["python", "automation", "script", "bot", "web scraping"],
+        "basic":    {"price": 15, "days": 1, "revisions": 1, "label": "Basic Script",    "desc": "Simple automation script, up to 50 lines, 1 feature."},
+        "standard": {"price": 35, "days": 2, "revisions": 2, "label": "Standard Bot",   "desc": "Full automation bot with error handling and logging."},
+        "premium":  {"price": 75, "days": 3, "revisions": 999, "label": "Pro Solution", "desc": "Production-ready solution with tests and documentation."},
+    },
+    {
+        "niche": "web_scraping",
+        "title": "I will scrape any website and deliver clean structured data",
+        "category_hint": "Programming & Tech",
+        "subcategory_hint": "Data Processing",
+        "tags": ["web scraping", "python", "data extraction", "beautifulsoup", "selenium"],
+        "basic":    {"price": 20, "days": 1, "revisions": 1, "label": "Basic Scraper",  "desc": "Scrape one page, up to 500 records, delivered as CSV."},
+        "standard": {"price": 45, "days": 2, "revisions": 2, "label": "Multi-page",     "desc": "Multi-page scraper with pagination, JSON + CSV output."},
+        "premium":  {"price": 90, "days": 3, "revisions": 999, "label": "Full Pipeline","desc": "Full pipeline: scrape + clean + schedule + delivery."},
+    },
+]
 
 
 class FiverrAgent:
@@ -183,6 +210,178 @@ class FiverrAgent:
         except Exception as exc:
             logger.error("[Fiverr] Gagal deliver order: %s", exc)
             return False
+
+    def check_gig_exists(self) -> bool:
+        """
+        Cek apakah seller sudah punya Gig aktif di Fiverr.
+        Return True jika ada, False jika belum ada gig sama sekali.
+        """
+        try:
+            page = self.browser.page
+            self.browser.navigate("https://www.fiverr.com/seller_dashboard")
+            page.wait_for_timeout(4000)
+
+            # Cek tombol atau link ke gig yang sudah ada
+            gig_items = page.locator("li[class*='gig'], div[class*='gig-card'], a[href*='/gigs/']").all()
+            if gig_items:
+                logger.info("[Fiverr] Gig sudah ada (%d ditemukan).", len(gig_items))
+                return True
+
+            # Alternatif: cek di halaman manage gigs
+            self.browser.navigate("https://www.fiverr.com/seller_dashboard/gigs")
+            page.wait_for_timeout(4000)
+            gig_items = page.locator("li[class*='gig'], tr[class*='gig'], div[class*='gig-wrapper']").all()
+            if gig_items:
+                logger.info("[Fiverr] Gig sudah ada di manage gigs (%d ditemukan).", len(gig_items))
+                return True
+
+            logger.info("[Fiverr] Tidak ada Gig aktif ditemukan.")
+            return False
+
+        except Exception as exc:
+            logger.warning("[Fiverr] Gagal cek gig: %s", exc)
+            return False
+
+    def create_gig(self, template_index: int = 0) -> bool:
+        """
+        Buat Gig baru di Fiverr secara otomatis menggunakan template + LLM.
+        template_index: 0 = python automation, 1 = web scraping
+        Return True jika berhasil membuat gig.
+        """
+        template = GIG_TEMPLATES[template_index % len(GIG_TEMPLATES)]
+        logger.info("[Fiverr] Membuat Gig baru: '%s' ...", template["title"])
+
+        # Generate deskripsi panjang dengan LLM
+        prompt = (
+            f"Write a professional and persuasive Fiverr gig description for:\n"
+            f"Title: {template['title']}\n"
+            f"Target buyer: small businesses and startups needing Python development.\n\n"
+            "Requirements:\n"
+            "- 150-200 words\n"
+            "- Start with a strong hook\n"
+            "- List 4-5 bullet points of what buyer gets\n"
+            "- End with a clear call to action\n"
+            "- Professional English, no emojis\n"
+            "Output ONLY the gig description text, no markdown or quotes."
+        )
+        description = self.llm.generate_content(prompt)
+        if not description:
+            description = (
+                f"Looking for a reliable Python developer? You've found the right gig!\n\n"
+                f"I specialize in building clean, efficient, and production-ready Python solutions "
+                f"tailored to your exact needs.\n\n"
+                f"What you'll get:\n"
+                f"- Custom Python scripts and automation tools\n"
+                f"- Clean, well-commented code with error handling\n"
+                f"- Fast delivery with revisions included\n"
+                f"- Full documentation and support\n\n"
+                f"Order now and let's build something great together!"
+            )
+
+        try:
+            page = self.browser.page
+            self.browser.navigate("https://www.fiverr.com/gigs/new")
+            page.wait_for_timeout(5000)
+
+            # ── Step 1: Judul Gig ──────────────────────────────────────────
+            title_input = page.locator("input[name='title'], input[placeholder*='title'], input[id*='title']").first
+            if title_input.is_visible(timeout=5000):
+                self.browser.human_type(title_input, template["title"])
+                page.wait_for_timeout(1000)
+            else:
+                logger.warning("[Fiverr] Input judul gig tidak ditemukan.")
+                return False
+
+            # ── Step 2: Kategori ───────────────────────────────────────────
+            category_btn = page.locator("select[name='category'], div[class*='category'] button, div[class*='category-select']").first
+            if category_btn.is_visible(timeout=3000):
+                self.browser.human_click(category_btn)
+                page.wait_for_timeout(1000)
+                # Pilih Programming & Tech
+                prog_option = page.locator(f"option:has-text('Programming'), li:has-text('Programming'), div:has-text('Programming & Tech')").first
+                if prog_option.is_visible(timeout=3000):
+                    self.browser.human_click(prog_option)
+                    page.wait_for_timeout(1000)
+
+            # ── Step 3: Tags ───────────────────────────────────────────────
+            tag_input = page.locator("input[placeholder*='tag'], input[name*='tag'], div[class*='tags'] input").first
+            if tag_input.is_visible(timeout=3000):
+                for tag in template["tags"][:5]:
+                    self.browser.human_type(tag_input, tag)
+                    page.keyboard.press("Enter")
+                    page.wait_for_timeout(500)
+
+            # ── Step 4: Lanjut ke halaman berikutnya ──────────────────────
+            next_btn = page.locator("button:has-text('Next'), button:has-text('Save & Continue')").first
+            if next_btn.is_visible(timeout=5000):
+                self.browser.human_click(next_btn)
+                page.wait_for_timeout(4000)
+
+            # ── Step 5: Deskripsi ──────────────────────────────────────────
+            desc_box = page.locator("div[contenteditable='true'], textarea[name='description'], div[class*='description'] textarea").first
+            if desc_box.is_visible(timeout=5000):
+                self.browser.human_type(desc_box, description)
+                page.wait_for_timeout(1000)
+
+            # ── Step 6: Paket Harga (Basic) ────────────────────────────────
+            for pkg_key, pkg_data in [("basic", template["basic"]), ("standard", template["standard"]), ("premium", template["premium"])]:
+                try:
+                    # Harga
+                    price_input = page.locator(f"input[name*='{pkg_key}'][name*='price'], input[data-package='{pkg_key}'][name*='price']").first
+                    if price_input.is_visible(timeout=3000):
+                        price_input.triple_click()
+                        self.browser.human_type(price_input, str(pkg_data["price"]))
+                        page.wait_for_timeout(500)
+
+                    # Delivery time
+                    delivery_input = page.locator(f"select[name*='{pkg_key}'][name*='delivery'], input[data-package='{pkg_key}'][name*='delivery']").first
+                    if delivery_input.is_visible(timeout=3000):
+                        delivery_input.select_option(str(pkg_data["days"]))
+                        page.wait_for_timeout(500)
+                except Exception as pkg_err:
+                    logger.warning("[Fiverr] Gagal isi paket %s: %s", pkg_key, pkg_err)
+
+            # ── Step 7: Lanjut ke publish ──────────────────────────────────
+            next_btn2 = page.locator("button:has-text('Next'), button:has-text('Save & Continue')").first
+            if next_btn2.is_visible(timeout=5000):
+                self.browser.human_click(next_btn2)
+                page.wait_for_timeout(4000)
+
+            # ── Step 8: Publish Gig ────────────────────────────────────────
+            publish_btn = page.locator("button:has-text('Publish'), button:has-text('Save & Publish')").first
+            if publish_btn.is_visible(timeout=8000):
+                self.browser.human_click(publish_btn)
+                page.wait_for_timeout(5000)
+                logger.info("[Fiverr] ✅ Gig '%s' berhasil dipublikasikan!", template["title"])
+                return True
+            else:
+                logger.warning("[Fiverr] Tombol Publish tidak ditemukan — mungkin perlu review manual.")
+                return False
+
+        except Exception as exc:
+            logger.error("[Fiverr] Gagal membuat Gig: %s", exc)
+            return False
+
+    def ensure_gig_exists(self) -> bool:
+        """
+        Cek apakah Gig sudah ada. Kalau belum, buat otomatis.
+        Dipanggil di awal setiap shift Fiverr.
+        Return True jika gig sudah ada atau berhasil dibuat.
+        """
+        if self.check_gig_exists():
+            return True
+
+        logger.info("[Fiverr] Belum ada Gig — membuat Gig Python Automation...")
+        success = self.create_gig(template_index=0)
+        if not success:
+            logger.info("[Fiverr] Gig pertama gagal — coba template Web Scraping...")
+            success = self.create_gig(template_index=1)
+
+        if success:
+            logger.info("[Fiverr] ✅ Gig berhasil dibuat. Buyer sekarang bisa menemukan dan order.")
+        else:
+            logger.warning("[Fiverr] ⚠️ Gig tidak bisa dibuat otomatis — buat manual di fiverr.com.")
+        return success
 
     def search_and_offer_gigs(self) -> bool:
         """
