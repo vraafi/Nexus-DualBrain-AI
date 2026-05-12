@@ -46,8 +46,8 @@ class FreelanceAgent:
                 from telegram_agent import TelegramAgent
                 import os
                 bot = TelegramAgent(os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID"))
-                bot.send_photo("captcha_challenge.png", caption="[TINDAKAN DIPERLUKAN] AI terhenti di halaman login. Tolong selesaikan CAPTCHA atau OTP. Buka browser secara manual di komputermu, login ke Upwork dengan akun yang sama, lalu tekan ENTER di terminal ini jika sudah berhasil masuk.")
-                input("\n[!!!] Buka browser aslimu, login ke Upwork untuk memecahkan CAPTCHA/OTP, lalu tekan ENTER di sini untuk melanjutkan... ")
+                bot.send_photo("captcha_challenge.png", caption="[TINDAKAN DIPERLUKAN] AI terhenti di halaman login. Tolong selesaikan CAPTCHA atau OTP. Buka browser secara manual di komputermu, login ke Upwork dengan akun yang sama, lalu biarkan sistem melanjutkan setelah beberapa saat.")
+                page.wait_for_timeout(30000) # Tunggu 30 detik untuk user login manual
                 if "login" in page.url or "challenge" in page.url:
                     logging.error("Failed to bypass login wall.")
                     return False
@@ -73,22 +73,35 @@ class FreelanceAgent:
             for card in job_cards[:8]:
                 try:
                     title_elem = card.get_by_role("heading").first
-                    if not title_elem.is_visible():
-                        title_elem = card.locator("h2, h3, a.up-n-link").first
-                    title = title_elem.inner_text()
+                    if not title_elem.is_visible(timeout=2000):
+                        title_elem = card.locator("h2, h3, a.up-n-link, h4").first
 
-                    description = card.locator("div[data-test='job-description-text'], span[data-test='job-description-text'], div.job-description").first.inner_text()
+                    if title_elem.is_visible(timeout=2000):
+                        title = title_elem.inner_text()
+                    else:
+                        title = "Unknown Title"
+
+                    desc_locator = card.locator("div[data-test='job-description-text'], span[data-test='job-description-text'], div.job-description, span[data-test='Clamp'], .air3-line-clamp").first
+
+                    if desc_locator.is_visible(timeout=2000):
+                        description = desc_locator.inner_text()
+                    else:
+                        description = "Description not found"
 
                     link_elem = card.get_by_role("link").first
-                    url = link_elem.get_attribute("href")
-                    if url and not url.startswith("http"):
-                        url = "https://www.upwork.com" + url
+                    if link_elem.is_visible(timeout=2000):
+                        url = link_elem.get_attribute("href")
+                        if url and not url.startswith("http"):
+                            url = "https://www.upwork.com" + url
+                    else:
+                        url = ""
 
-                    jobs.append({
-                        "title": title,
-                        "description": description,
-                        "url": url
-                    })
+                    if title != "Unknown Title":
+                        jobs.append({
+                            "title": title,
+                            "description": description,
+                            "url": url
+                        })
                 except Exception as card_err:
                     logging.warning(f"Failed to parse a job card: {card_err}")
 
