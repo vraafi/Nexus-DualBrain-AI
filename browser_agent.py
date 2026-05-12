@@ -201,15 +201,40 @@ class BrowserAgent:
                 pass
 
     def human_click(self, selector):
+        """
+        Klik elemen. Menerima string CSS selector ATAU Playwright Locator object.
+        Jika Locator: klik langsung via bounding box (kompatibel dengan ghost cursor).
+        Jika string: pakai cursor.click() atau page.click().
+        """
+        from playwright.sync_api import Locator
+        is_locator = isinstance(selector, Locator)
         try:
-            if self.cursor is not None:
-                self.cursor.click(selector)
+            if is_locator:
+                # Locator object — ghost cursor pakai koordinat bounding box
+                selector.scroll_into_view_if_needed()
+                if self.cursor is not None:
+                    box = selector.bounding_box()
+                    if box:
+                        cx = box["x"] + box["width"] / 2
+                        cy = box["y"] + box["height"] / 2
+                        self.page.mouse.click(cx, cy)
+                    else:
+                        selector.click()
+                else:
+                    selector.click()
             else:
-                self.page.click(selector)
+                # String selector
+                if self.cursor is not None:
+                    self.cursor.click(selector)
+                else:
+                    self.page.click(selector)
         except Exception as e:
             logging.warning(f"Click gagal pada {selector}, fallback standard click. Error: {e}")
             try:
-                self.page.click(selector)
+                if is_locator:
+                    selector.click()
+                else:
+                    self.page.click(selector)
             except Exception as e2:
                 logging.error(f"Standard click juga gagal: {e2}")
 
