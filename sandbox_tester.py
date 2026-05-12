@@ -235,9 +235,7 @@ class SandboxTester:
 
                       logging.info(f"Apology generated: {advice}")
 
-                      # Execute true graceful cancellation by writing it to the script path
-                      # so the delivery phase can attach it or send it, fulfilling the requirement to
-                      # actually communicate with the client instead of ghosting them.
+                      # Write apology file so main.py can send it to the client
                       apology_file = "apology_message.txt"
                       with open(apology_file, "w") as f:
                           f.write(advice)
@@ -245,8 +243,9 @@ class SandboxTester:
                       with open("cancellation_report.log", "a") as f:
                           f.write(f"Task Failed. Apology drafted to {apology_file}:\n{advice}\n\n")
 
-                      # Return a distinct failure tuple/object to trigger the apology flow in main
-                      return {"status": "failed", "apology_file": apology_file}
+                      # Return False so main.py correctly evaluates sandbox as FAILED
+                      # The apology file is still written above for main.py to pick up and send
+                      return False
 
                  attempt += 1
                  time.sleep(5)
