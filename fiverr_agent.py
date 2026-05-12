@@ -577,45 +577,6 @@ class FiverrAgent:
         else:
             logger.warning("[Fiverr] Tombol Next tidak ditemukan.")
 
-            # ── Step 6: Paket Harga (Basic) ────────────────────────────────
-            for pkg_key, pkg_data in [("basic", template["basic"]), ("standard", template["standard"]), ("premium", template["premium"])]:
-                try:
-                    # Harga
-                    price_input = page.locator(f"input[name*='{pkg_key}'][name*='price'], input[data-package='{pkg_key}'][name*='price']").first
-                    if price_input.is_visible(timeout=3000):
-                        price_input.triple_click()
-                        self.browser.human_type(price_input, str(pkg_data["price"]))
-                        page.wait_for_timeout(500)
-
-                    # Delivery time
-                    delivery_input = page.locator(f"select[name*='{pkg_key}'][name*='delivery'], input[data-package='{pkg_key}'][name*='delivery']").first
-                    if delivery_input.is_visible(timeout=3000):
-                        delivery_input.select_option(str(pkg_data["days"]))
-                        page.wait_for_timeout(500)
-                except Exception as pkg_err:
-                    logger.warning("[Fiverr] Gagal isi paket %s: %s", pkg_key, pkg_err)
-
-            # ── Step 7: Lanjut ke publish ──────────────────────────────────
-            next_btn2 = page.locator("button:has-text('Next'), button:has-text('Save & Continue')").first
-            if next_btn2.is_visible(timeout=5000):
-                self.browser.human_click(next_btn2)
-                page.wait_for_timeout(4000)
-
-            # ── Step 8: Publish Gig ────────────────────────────────────────
-            publish_btn = page.locator("button:has-text('Publish'), button:has-text('Save & Publish')").first
-            if publish_btn.is_visible(timeout=8000):
-                self.browser.human_click(publish_btn)
-                page.wait_for_timeout(5000)
-                logger.info("[Fiverr] ✅ Gig '%s' berhasil dipublikasikan!", template["title"])
-                return True
-            else:
-                logger.warning("[Fiverr] Tombol Publish tidak ditemukan — mungkin perlu review manual.")
-                return False
-
-        except Exception as exc:
-            logger.error("[Fiverr] Gagal membuat Gig: %s", exc)
-            return False
-
     def ensure_gig_exists(self) -> bool:
         """
         Cek apakah Gig sudah ada. Kalau belum, buat otomatis.
@@ -632,9 +593,9 @@ class FiverrAgent:
             success = self.create_gig(template_index=1)
 
         if success:
-            logger.info("[Fiverr] ✅ Gig berhasil dibuat. Buyer sekarang bisa menemukan dan order.")
+            logger.info("[Fiverr] Gig berhasil dibuat. Buyer sekarang bisa menemukan dan order.")
         else:
-            logger.warning("[Fiverr] ⚠️ Gig tidak bisa dibuat otomatis — buat manual di fiverr.com.")
+            logger.warning("[Fiverr] Gig tidak bisa dibuat otomatis — buat manual di fiverr.com.")
         return success
 
     def search_and_offer_gigs(self) -> bool:
