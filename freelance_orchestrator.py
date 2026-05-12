@@ -229,6 +229,9 @@ class FreelanceOrchestrator:
                                     time.sleep(30)
 
                         elif platform == "fiverr":
+                            # Pastikan Gig sudah ada sebelum cek order
+                            thread_fiverr.ensure_gig_exists()
+
                             orders = thread_fiverr.check_active_orders()
                             fiverr_activity_found = bool(orders)
                             if orders:
