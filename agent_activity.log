@@ -32,3 +32,187 @@
 2026-05-15 02:19:38,143 [MainThread] INFO — [Benchmark] Memanggil Antigravity...
 2026-05-15 02:19:38,147 [MainThread] INFO — [Benchmark] Menjalankan Antigravity (Attempt 1)...
 2026-05-15 02:19:41,449 [MainThread] INFO — [Benchmark] Menjalankan Aider (Sekuensial)...
+2026-05-15 02:29:09,494 [MainThread] INFO — ============================================================
+2026-05-15 02:29:09,494 [MainThread] INFO — Nexus DualBrain AI — Autonomous Freelance Agent
+2026-05-15 02:29:09,495 [MainThread] INFO — ============================================================
+2026-05-15 02:29:09,495 [MainThread] INFO — ✅ Hermes Agent (skills, memory, Telegram) : AKTIF
+2026-05-15 02:29:09,495 [MainThread] INFO — ✅ Antigravity (autonomous local coding)   : AKTIF
+2026-05-15 02:29:09,495 [MainThread] INFO — ✅ Aider (fallback coding agent)           : AKTIF
+2026-05-15 02:29:09,495 [MainThread] INFO — ✅ GitHub CLI (issue/PR management)       : AKTIF
+2026-05-15 02:29:09,495 [MainThread] INFO — ℹ️  Hermes CLI (optional, extra features)  : tidak terinstall
+2026-05-15 02:29:09,495 [MainThread] INFO — ============================================================
+2026-05-15 02:29:09,495 [MainThread] INFO — [Hermes] Mode fallback: Telegram direct (HERMES_API_KEY tidak di-set)
+2026-05-15 02:29:09,497 [MainThread] INFO — [SkillLibrary] Inisialisasi selesai. DB: /home/user001/Nexus-DualBrain-AI/output/skill_library.db
+2026-05-15 02:29:09,498 [MainThread] INFO — [SelfImprover] AGI self-reflection engine aktif.
+2026-05-15 02:29:09,498 [MainThread] INFO — Retrieving branding strategy for upwork...
+2026-05-15 02:29:09,498 [MainThread] INFO — Strategy applied: Problem Solver Professional
+2026-05-15 02:29:09,498 [MainThread] INFO — Retrieving branding strategy for fiverr...
+2026-05-15 02:29:09,498 [MainThread] INFO — Strategy applied: Productized Service
+2026-05-15 02:29:09,498 [MainThread] INFO — Retrieving branding strategy for freelancer...
+2026-05-15 02:29:09,498 [MainThread] INFO — Strategy applied: Professional Freelancer & Senior Engineer
+2026-05-15 02:29:09,499 [MainThread] INFO — [Hermes] Command listener aktif.
+2026-05-15 02:29:10,405 [MainThread] INFO — 🚀 Memulai proses Benchmark Coding perdana (Easy, Medium, Hard)...
+2026-05-15 02:29:11,318 [MainThread] INFO — 📝 Menjalankan Benchmark HELLO: Antigravity Communication Test
+2026-05-15 02:29:14,109 [MainThread] INFO — [Benchmark] Repo private dibuat: vraafi/sim-hello-antigravity-communication-test-1778786951
+2026-05-15 02:29:17,354 [MainThread] INFO — [Benchmark] Memanggil Antigravity...
+2026-05-15 02:29:17,355 [MainThread] INFO — [Benchmark] Menjalankan Antigravity (Attempt 1)...
+2026-05-15 02:29:20,904 [MainThread] INFO — [Benchmark] Menjalankan Aider (Sekuensial)...
+2026-05-15 02:30:06,001 [MainThread] INFO — [Antigravity STDOUT]
+
+2026-05-15 02:30:06,003 [MainThread] ERROR — [Antigravity STDERR]
+Warning: 'model' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'message' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'yes-always' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'auto-commits' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'mcp' is not in the list of known options, but still passed to Electron/Chromium.
+
+2026-05-15 02:30:06,003 [MainThread] INFO — [Benchmark] Antigravity selesai memproses file! Mem-push ke GitHub...
+2026-05-15 02:30:07,935 [MainThread] INFO — [Auto-Publish] ✅ SUKSES! Antigravity berhasil mem-push kode langsung ke main branch.
+2026-05-15 02:30:07,936 [MainThread] ERROR — [Benchmark] Antigravity Gagal membuat file.
+2026-05-15 02:30:07,937 [MainThread] INFO — Setting up sandbox environment for benchmark_hello.py. Running for 300s.
+2026-05-15 02:30:07,937 [MainThread] INFO — Test Attempt 1...
+2026-05-15 02:30:22,966 [MainThread] INFO — Running static analysis via flake8...
+2026-05-15 02:30:23,112 [MainThread] WARNING — Static analysis found potential issues:
+/home/user001/Nexus-DualBrain-AI/client_sandbox/842ae4ac-c43b-4c63-bbe9-2390baeda352/benchmark_hello.py:1:41: W292 no newline at end of file
+
+2026-05-15 02:30:23,496 [MainThread] INFO — Sandbox testing passed successfully. (Exit Code 5: No unit tests found, but script executed cleanly).
+2026-05-15 02:30:23,497 [MainThread] INFO — 📝 Menjalankan Benchmark EASY: Custom Automation and Web Scraping
+2026-05-15 02:30:26,040 [MainThread] INFO — [Benchmark] Repo private dibuat: vraafi/sim-easy-custom-automation-and-web-scra-1778787023
+2026-05-15 02:30:29,254 [MainThread] INFO — [Benchmark] Memanggil Antigravity...
+2026-05-15 02:30:29,256 [MainThread] INFO — [Benchmark] Menjalankan Antigravity (Attempt 1)...
+2026-05-15 02:30:32,640 [MainThread] INFO — [Benchmark] Menjalankan Aider (Sekuensial)...
+2026-05-15 02:31:38,852 [MainThread] INFO — [Antigravity STDOUT]
+
+2026-05-15 02:31:38,854 [MainThread] ERROR — [Antigravity STDERR]
+Warning: 'model' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'message' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'yes-always' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'auto-commits' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'mcp' is not in the list of known options, but still passed to Electron/Chromium.
+
+2026-05-15 02:31:38,855 [MainThread] INFO — [Benchmark] Antigravity selesai memproses file! Mem-push ke GitHub...
+2026-05-15 02:31:40,780 [MainThread] INFO — [Auto-Publish] ✅ SUKSES! Antigravity berhasil mem-push kode langsung ke main branch.
+2026-05-15 02:31:40,780 [MainThread] ERROR — [Benchmark] Antigravity Gagal membuat file.
+2026-05-15 02:31:40,781 [MainThread] INFO — Setting up sandbox environment for benchmark_easy.py. Running for 300s.
+2026-05-15 02:31:40,781 [MainThread] INFO — Test Attempt 1...
+2026-05-15 02:31:41,859 [MainThread] INFO — Running static analysis via flake8...
+2026-05-15 02:31:41,993 [MainThread] WARNING — Static analysis found potential issues:
+/home/user001/Nexus-DualBrain-AI/client_sandbox/218c607c-bf93-405e-90e4-2d72150acddf/benchmark_easy.py:1:41: W292 no newline at end of file
+
+2026-05-15 02:31:42,238 [MainThread] INFO — Sandbox testing passed successfully. (Exit Code 5: No unit tests found, but script executed cleanly).
+2026-05-15 02:31:42,239 [MainThread] INFO — 📝 Menjalankan Benchmark MEDIUM: Cloud Architecture & Microservices Migration (IaC)
+2026-05-15 02:31:44,467 [MainThread] INFO — [Benchmark] Repo private dibuat: vraafi/sim-medium-cloud-architecture---microserv-1778787102
+2026-05-15 02:31:47,414 [MainThread] INFO — [Benchmark] Memanggil Antigravity...
+2026-05-15 02:31:47,415 [MainThread] INFO — [Benchmark] Menjalankan Antigravity (Attempt 1)...
+2026-05-15 02:31:50,621 [MainThread] INFO — [Benchmark] Menjalankan Aider (Sekuensial)...
+2026-05-15 02:34:36,297 [MainThread] INFO — [Antigravity STDOUT]
+
+2026-05-15 02:34:36,299 [MainThread] ERROR — [Antigravity STDERR]
+Warning: 'model' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'message' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'yes-always' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'auto-commits' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'mcp' is not in the list of known options, but still passed to Electron/Chromium.
+
+2026-05-15 02:34:36,300 [MainThread] INFO — [Benchmark] Antigravity selesai memproses file! Mem-push ke GitHub...
+2026-05-15 02:34:38,088 [MainThread] INFO — [Auto-Publish] ✅ SUKSES! Antigravity berhasil mem-push kode langsung ke main branch.
+2026-05-15 02:34:38,088 [MainThread] ERROR — [Benchmark] Antigravity Gagal membuat file.
+2026-05-15 02:34:38,089 [MainThread] INFO — Setting up sandbox environment for benchmark_medium.py. Running for 300s.
+2026-05-15 02:34:38,089 [MainThread] INFO — Test Attempt 1...
+2026-05-15 02:34:39,181 [MainThread] INFO — Running static analysis via flake8...
+2026-05-15 02:34:39,327 [MainThread] WARNING — Static analysis found potential issues:
+/home/user001/Nexus-DualBrain-AI/client_sandbox/aceb49e9-d0a1-4454-8fe8-63c8e077fcb5/benchmark_medium.py:1:41: W292 no newline at end of file
+
+2026-05-15 02:34:39,662 [MainThread] INFO — Sandbox testing passed successfully. (Exit Code 5: No unit tests found, but script executed cleanly).
+2026-05-15 02:34:39,662 [MainThread] INFO — 📝 Menjalankan Benchmark HARD: Global-Scale Distributed Systems & Chaos Engineering
+2026-05-15 02:34:42,679 [MainThread] INFO — [Benchmark] Repo private dibuat: vraafi/sim-hard-global-scale-distributed-syste-1778787279
+2026-05-15 02:34:46,102 [MainThread] INFO — [Benchmark] Memanggil Antigravity...
+2026-05-15 02:34:46,102 [MainThread] INFO — [Benchmark] Menjalankan Antigravity (Attempt 1)...
+2026-05-15 02:34:48,995 [MainThread] INFO — [Benchmark] Menjalankan Aider (Sekuensial)...
+2026-05-15 02:38:59,922 [MainThread] INFO — [Antigravity STDOUT]
+
+2026-05-15 02:38:59,925 [MainThread] ERROR — [Antigravity STDERR]
+Warning: 'model' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'message' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'yes-always' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'auto-commits' is not in the list of known options, but still passed to Electron/Chromium.
+Warning: 'mcp' is not in the list of known options, but still passed to Electron/Chromium.
+
+2026-05-15 02:38:59,926 [MainThread] INFO — [Benchmark] Antigravity selesai memproses file! Mem-push ke GitHub...
+2026-05-15 02:39:01,703 [MainThread] INFO — [Auto-Publish] ✅ SUKSES! Antigravity berhasil mem-push kode langsung ke main branch.
+2026-05-15 02:39:01,704 [MainThread] ERROR — [Benchmark] Antigravity Gagal membuat file.
+2026-05-15 02:39:01,704 [MainThread] INFO — Setting up sandbox environment for benchmark_hard.py. Running for 300s.
+2026-05-15 02:39:01,704 [MainThread] INFO — Test Attempt 1...
+2026-05-15 02:39:02,974 [MainThread] INFO — Running static analysis via flake8...
+2026-05-15 02:39:03,110 [MainThread] WARNING — Static analysis found potential issues:
+/home/user001/Nexus-DualBrain-AI/client_sandbox/ec5e0b8e-0aeb-4247-b73c-fafaea3d6e96/benchmark_hard.py:1:41: W292 no newline at end of file
+
+2026-05-15 02:39:03,346 [MainThread] INFO — Sandbox testing passed successfully. (Exit Code 5: No unit tests found, but script executed cleanly).
+2026-05-15 02:39:04,237 [MainThread] INFO — ✅ Benchmark selesai.
+2026-05-15 02:39:05,280 [MainThread] INFO — BRAVE_CDP_URL dari env: http://172.24.48.1:9222
+2026-05-15 02:39:05,280 [MainThread] INFO — Urutan endpoint yang akan dicoba: ['http://172.24.48.1:9222']
+2026-05-15 02:39:05,281 [MainThread] INFO — Pastikan Brave sudah berjalan dengan:
+2026-05-15 02:39:05,281 [MainThread] INFO —   cmd /c start brave --remote-debugging-port=9222
+2026-05-15 02:39:05,282 [MainThread] INFO — Mencoba konek ke Brave: http://172.24.48.1:9222 ...
+2026-05-15 02:39:06,019 [MainThread] INFO — Terhubung ke Brave via http://172.24.48.1:9222. Tab: chrome://newtab/
+2026-05-15 02:39:06,242 [MainThread] INFO — Initiating Upwork login sequence...
+2026-05-15 02:39:06,244 [MainThread] INFO — Credential dimuat untuk upwork (User: ema...da)
+2026-05-15 02:40:18,601 [MainThread] ERROR — Failed during human_type: Locator.click: Timeout 60000ms exceeded.
+Call log:
+  - waiting for locator("input[name='login[username]'], input[type='email'], input[id='login_username']").first
+
+2026-05-15 02:40:18,612 [MainThread] INFO — 🧠 Menjalankan Visual Reasoning Fallback untuk mengetik...
+2026-05-15 02:40:19,209 [MainThread] ERROR — Visual reasoning fallback failed: 'NoneType' object is not subscriptable
+2026-05-15 02:40:19,210 [MainThread] INFO — ⌨️ Visual gagal. Mencoba Keyboard Navigation Fallback (TAB/ENTER)...
+2026-05-15 02:40:23,210 [MainThread] INFO — Upwork login sequence completed.
+2026-05-15 02:40:23,887 [MainThread] INFO — Browser dinavigasi ke halaman netral (Google).
+2026-05-15 02:40:24,015 [MainThread] INFO — Koneksi CDP dilepas. Brave tetap terbuka.
+2026-05-15 02:40:24,057 [MainThread] INFO — BRAVE_CDP_URL dari env: http://172.24.48.1:9222
+2026-05-15 02:40:24,058 [MainThread] INFO — Urutan endpoint yang akan dicoba: ['http://172.24.48.1:9222']
+2026-05-15 02:40:24,058 [MainThread] INFO — Pastikan Brave sudah berjalan dengan:
+2026-05-15 02:40:24,059 [MainThread] INFO —   cmd /c start brave --remote-debugging-port=9222
+2026-05-15 02:40:24,059 [MainThread] INFO — Mencoba konek ke Brave: http://172.24.48.1:9222 ...
+2026-05-15 02:40:24,883 [MainThread] INFO — Terhubung ke Brave via http://172.24.48.1:9222. Tab: https://www.google.com/
+2026-05-15 02:40:25,419 [MainThread] INFO — Checking Upwork messages for auto-negotiation...
+2026-05-15 02:40:36,640 [MainThread] INFO — Browser dinavigasi ke halaman netral (Google).
+2026-05-15 02:40:36,720 [MainThread] INFO — Koneksi CDP dilepas. Brave tetap terbuka.
+2026-05-15 02:40:37,778 [MainThread] INFO — BRAVE_CDP_URL dari env: http://172.24.48.1:9222
+2026-05-15 02:40:37,779 [MainThread] INFO — Urutan endpoint yang akan dicoba: ['http://172.24.48.1:9222']
+2026-05-15 02:40:37,779 [MainThread] INFO — Pastikan Brave sudah berjalan dengan:
+2026-05-15 02:40:37,779 [MainThread] INFO —   cmd /c start brave --remote-debugging-port=9222
+2026-05-15 02:40:37,779 [MainThread] INFO — Mencoba konek ke Brave: http://172.24.48.1:9222 ...
+2026-05-15 02:40:38,331 [MainThread] INFO — Terhubung ke Brave via http://172.24.48.1:9222. Tab: https://www.google.com/
+2026-05-15 02:40:38,613 [MainThread] INFO — [EmailMonitor] ✅ Dimulai — cek setiap 5 menit.
+2026-05-15 02:40:38,613 [MainThread] INFO — [Orchestrator] 🚀 Freelance Agent aktif. (Upwork: 01-11, Rest: 11-17, Fiverr: 17-01 WIB)
+2026-05-15 02:40:38,613 [MainThread] INFO — [Scheduler] ☀️ Waktu aktif dimulai.
+2026-05-15 02:40:38,614 [MainThread] INFO — [Orchestrator] 🔄 Platform aktif: UPWORK | Mulai: 02:40 WIB
+2026-05-15 02:40:38,614 [MainThread] INFO — Initiating Upwork login sequence...
+2026-05-15 02:40:38,614 [MainThread] INFO — Credential dimuat untuk upwork (User: ema...da)
+2026-05-15 02:41:49,583 [MainThread] ERROR — Failed during human_type: Locator.click: Timeout 60000ms exceeded.
+Call log:
+  - waiting for locator("input[name='login[username]'], input[type='email'], input[id='login_username']").first
+
+2026-05-15 02:41:49,584 [MainThread] INFO — 🧠 Menjalankan Visual Reasoning Fallback untuk mengetik...
+2026-05-15 02:41:49,942 [MainThread] ERROR — Visual reasoning fallback failed: 'NoneType' object is not subscriptable
+2026-05-15 02:41:49,942 [MainThread] INFO — ⌨️ Visual gagal. Mencoba Keyboard Navigation Fallback (TAB/ENTER)...
+2026-05-15 02:41:53,702 [MainThread] INFO — Upwork login sequence completed.
+2026-05-15 02:41:53,702 [MainThread] INFO — [Orchestrator] Login UPWORK berhasil.
+2026-05-15 02:41:53,703 [Search-upwork] INFO — BRAVE_CDP_URL dari env: http://172.24.48.1:9222
+2026-05-15 02:41:53,703 [Search-upwork] INFO — Urutan endpoint yang akan dicoba: ['http://172.24.48.1:9222']
+2026-05-15 02:41:53,703 [Search-upwork] INFO — Pastikan Brave sudah berjalan dengan:
+2026-05-15 02:41:53,703 [Search-upwork] INFO —   cmd /c start brave --remote-debugging-port=9222
+2026-05-15 02:41:53,703 [Search-upwork] INFO — Mencoba konek ke Brave: http://172.24.48.1:9222 ...
+2026-05-15 02:41:54,202 [Search-upwork] INFO — Terhubung ke Brave via http://172.24.48.1:9222. Tab: https://www.upwork.com/nx/find-work/best-matches
+2026-05-15 02:41:54,429 [Search-upwork] INFO — [Search-upwork] Tab baru dibuka untuk thread ini.
+2026-05-15 02:41:54,639 [Search-upwork] INFO — Scraping Python/Web Scraping jobs from Upwork...
+2026-05-15 02:42:05,886 [Search-upwork] INFO — Successfully scraped 8 jobs.
+2026-05-15 02:42:05,887 [Search-upwork] INFO — Batch filtering 8 jobs...
+2026-05-15 02:42:05,887 [Search-upwork] INFO — Model diganti ke: gemma-4-26b-a4b-it
+2026-05-15 02:42:41,260 [Search-upwork] INFO — Model diganti ke: gemma-4-31b-it
+2026-05-15 02:42:41,263 [Search-upwork] ERROR — Failed to parse LLM filter response: Expecting value: line 1 column 1 (char 0). Raw response: *   Role: AI filtering system.
+    *   Constraint: Determine if jobs can be 100% completed autonomously by an AI agent restricted to: Python code, web scraping, and API integrations.
+    *   Prohibite
+2026-05-15 02:47:54,190 [MainThread] INFO — [Orchestrator] Dihentikan oleh user.
+2026-05-15 02:47:54,193 [MainThread] INFO — [EmailMonitor] Dihentikan.
+2026-05-15 02:47:54,494 [MainThread] INFO — Koneksi CDP dilepas. Brave tetap terbuka.
+2026-05-15 02:47:54,541 [MainThread] INFO — ⏳ Cooldown 7200 detik...
