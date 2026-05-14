@@ -1,0 +1,8 @@
+venv/
+sandbox_env/
+client_sandbox/
+.env
+*.enc
+*.salt
+__pycache__/
+output/

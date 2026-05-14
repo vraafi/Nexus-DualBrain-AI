@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "hermes-agent": {
+      "command": "wsl",
+      "args": [
+        "bash",
+        "-c",
+        "~/Nexus-DualBrain-AI/venv/bin/python /mnt/c/Users/user/.antigravity/Nexus-DualBrain-AI/hermes_mcp_server.py || python3 /mnt/c/Users/user/.antigravity/Nexus-DualBrain-AI/hermes_mcp_server.py"
+      ],
+      "env": {}
+    }
+  }
+}

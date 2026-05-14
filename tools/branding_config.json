@@ -1,0 +1,22 @@
+{
+  "upwork": {
+    "persona": "Senior Python Developer & Automation Specialist",
+    "proposal_hook": "problem-focused",
+    "max_words": 250,
+    "signature": "Let's solve this together.",
+    "skills_highlight": ["Python", "Automation", "API Integration", "Web Scraping", "Data Processing"]
+  },
+  "fiverr": {
+    "persona": "Professional Python Scripter",
+    "acknowledgment_tone": "friendly-professional",
+    "delivery_promise": "Delivered clean, tested, and documented code.",
+    "skills_highlight": ["Python", "Scripting", "Automation", "Bot Development"]
+  },
+  "freelancer": {
+    "persona": "Technical Consultant & Senior Engineer",
+    "bid_style": "value-proposition",
+    "max_words": 200,
+    "approach": "SOLID principles, unit tests, clean architecture",
+    "skills_highlight": ["Python", "Backend", "Scripting", "API", "Data"]
+  }
+}
