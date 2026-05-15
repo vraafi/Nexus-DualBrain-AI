@@ -322,11 +322,31 @@ class FiverrAgent:
         """
         from identity_manager import IdentityManager
         try:
-            identity = IdentityManager()
-            creds = identity.get_credential("fiverr")
-            username = (creds or {}).get("username", "")
-            if "@" in username:
-                username = username.split("@")[0]
+            # Prioritas: ambil username dari URL tab Fiverr yang aktif di browser
+            # (lebih andal daripada credential yang bisa berupa email/placeholder)
+            username = ""
+            try:
+                pages = self.browser.context.pages if self.browser.context else []
+                for p in pages:
+                    url = p.url
+                    if "fiverr.com/users/" in url:
+                        parts = url.split("/users/")
+                        if len(parts) > 1:
+                            candidate = parts[1].split("/")[0]
+                            if candidate and candidate != "username_anda":
+                                username = candidate
+                                logger.info("[Fiverr] Username dari URL tab: %s", username)
+                                break
+            except Exception:
+                pass
+
+            # Fallback: credential (hanya jika bukan email atau placeholder)
+            if not username:
+                identity = IdentityManager()
+                creds = identity.get_credential("fiverr")
+                raw = (creds or {}).get("username", "")
+                if raw and "@" not in raw and raw != "username_anda":
+                    username = raw
 
             manage_url = (
                 f"https://www.fiverr.com/users/{username}/manage_gigs"
@@ -454,7 +474,25 @@ class FiverrAgent:
             # ── Step 0: Navigasi ke halaman Manage Gigs ────────────────────
             # Menggunakan URL spesifik user agar tepat sasaran
             logger.info("[Fiverr] Navigasi ke halaman Manage Gigs...")
-            self.browser.navigate("https://www.fiverr.com/users/vraafi/manage_gigs")
+            # Ambil username dari URL tab aktif (sama seperti check_gig_count)
+            _username = ""
+            try:
+                _pages = self.browser.context.pages if self.browser.context else []
+                for _p in _pages:
+                    if "fiverr.com/users/" in _p.url:
+                        _parts = _p.url.split("/users/")
+                        if len(_parts) > 1:
+                            _candidate = _parts[1].split("/")[0]
+                            if _candidate and _candidate != "username_anda":
+                                _username = _candidate
+                                break
+            except Exception:
+                pass
+            _manage_url = (
+                f"https://www.fiverr.com/users/{_username}/manage_gigs"
+                if _username else "https://www.fiverr.com/seller_dashboard"
+            )
+            self.browser.navigate(_manage_url)
             page.wait_for_timeout(6000)
             
             # Cari tombol Create a new Gig
@@ -469,13 +507,31 @@ class FiverrAgent:
                 page.wait_for_timeout(6000)
 
             # ── Step 1: Judul Gig ──────────────────────────────────────────
-            # Selector luas — Fiverr sering update class names
-            title_input = page.locator(
-                "input[name='title'], input[placeholder*='title' i], "
-                "input[data-field='title'], input[id*='title']"
-            ).first
-            if not title_input.is_visible(timeout=8000):
-                logger.warning("[Fiverr] Input judul tidak ditemukan.")
+            # Fiverr sering ganti class name; coba semua selector yang dikenal
+            TITLE_SELECTORS = [
+                "input[name='title']",
+                "input[placeholder*='title' i]",
+                "input[data-field='title']",
+                "input[id*='title']",
+                "input[class*='title']",
+                "div[class*='gig-title'] input",
+                "div[data-testid*='title'] input",
+                "label:has-text('Gig title') + input",
+                "label:has-text('Gig title') ~ input",
+                "section input[type='text']:first-of-type",
+            ]
+            title_input = None
+            for _sel in TITLE_SELECTORS:
+                try:
+                    _candidate = page.locator(_sel).first
+                    if _candidate.is_visible(timeout=3000):
+                        title_input = _candidate
+                        logger.info("[Fiverr] Input judul ditemukan via: %s", _sel)
+                        break
+                except Exception:
+                    continue
+            if title_input is None:
+                logger.warning("[Fiverr] Input judul tidak ditemukan setelah coba %d selector.", len(TITLE_SELECTORS))
                 return False
             title_input.triple_click()
             self.browser.human_type(title_input, template["title"])
