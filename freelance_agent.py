@@ -291,8 +291,12 @@ Title: {job.get('title')}\
 
         try:
             page = self.browser.page
-            self.browser.navigate("https://www.upwork.com/nx/messages/")
-            page.wait_for_timeout(5000)
+            nav_ok = self.browser.navigate("https://www.upwork.com/nx/messages/")
+            if not nav_ok:
+                self.logger.warning("Navigasi ke Upwork messages gagal — skip check messages.")
+                return negotiation_state, actionable_job_data
+            # Gunakan time.sleep bukan page.wait_for_timeout agar aman jika koneksi putus
+            time.sleep(5)
 
             rooms = page.locator("div[data-test='message-room-list-item']").all()
             for room in rooms[:3]:
