@@ -89,6 +89,21 @@ flask>=3.0.2
 mcp>=1.0.0
 
 
+# ─── Kompatibilitas aider-chat (JANGAN UBAH versi ini) ────────
+# aider-chat sudah terinstall di sistem dengan versi spesifik.
+# Pin versi berikut agar tidak konflik saat pip install -r requirements.txt
+#
+# Konflik yang terjadi tanpa pin ini:
+#   aider-chat 0.86.2 requires numpy==1.26.4   → dinaikkan ke 2.4.4
+#   aider-chat 0.86.2 requires openai==2.20.0  → diturunkan ke 2.16.0
+#   aider-chat 0.86.2 requires posthog==7.8.6  → diturunkan ke 7.7.0
+#   aider-chat 0.86.2 requires rich==14.3.2    → diturunkan ke 14.3.1
+numpy==1.26.4
+openai==2.20.0
+posthog==7.8.6
+rich==14.3.2
+
+
 # ════════════════════════════════════════════════════════════════
 # HERMES AGENT — install TERPISAH dari GitHub (BUKAN dari PyPI)
 # ════════════════════════════════════════════════════════════════
