@@ -43,20 +43,70 @@ _SHARED_BROWSER: Optional[Browser] = None
 _SHARED_BROWSER_LOCK = threading.Lock()
 
 
+def _resolve_brave_path() -> Optional[str]:
+    """
+    Cari path executable Brave browser dari env variable atau lokasi default.
+    Prioritas:
+      1. BRAVE_PATH          — env var eksplisit (direkomendasikan)
+      2. BROWSER_EXECUTABLE  — env var alternatif
+      3. Lokasi default Linux/Windows/macOS (fallback otomatis)
+    Return None jika tidak ditemukan (pakai Chromium bawaan Playwright).
+    """
+    import shutil
+
+    # 1. Dari env variable
+    for env_key in ("BRAVE_PATH", "BROWSER_EXECUTABLE", "BRAVE_EXECUTABLE"):
+        path = os.environ.get(env_key)
+        if path and os.path.isfile(path):
+            return path
+
+    # 2. Fallback ke lokasi umum Brave di berbagai OS
+    candidates = [
+        # Linux
+        "/usr/bin/brave-browser",
+        "/usr/bin/brave",
+        "/snap/bin/brave",
+        "/opt/brave.com/brave/brave",
+        # Windows (via WSL path tidak perlu, tapi kalau native)
+        r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+        r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
+        # macOS
+        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+
+    # 3. Cari via PATH
+    found = shutil.which("brave-browser") or shutil.which("brave")
+    return found
+
+
 def _get_shared_browser(proxy=None) -> Browser:
     """
     Mengembalikan singleton Browser yang dibuat sekali dan dipakai ulang.
     Thread-safe: menggunakan _SHARED_BROWSER_LOCK untuk init.
     keep_alive=True agar browser tidak ditutup antar task.
+
+    Jika BRAVE_PATH (atau BROWSER_EXECUTABLE) di-set di env, Brave digunakan
+    sebagai browser. Jika tidak, fallback ke Chromium bawaan Playwright.
     """
     global _SHARED_BROWSER
     with _SHARED_BROWSER_LOCK:
         if _SHARED_BROWSER is None:
             proxy_config = {"server": proxy} if proxy else None
+            brave_path = _resolve_brave_path()
+
+            if brave_path:
+                logger.info("[BrowserAgent] Menggunakan Brave: %s", brave_path)
+            else:
+                logger.info("[BrowserAgent] BRAVE_PATH tidak ditemukan, pakai Chromium bawaan Playwright.")
+
             profile = BrowserProfile(
                 headless=False,
                 proxy=proxy_config,
                 keep_alive=True,
+                executable_path=brave_path,  # None = Playwright Chromium default
             )
             _SHARED_BROWSER = Browser(browser_profile=profile)
             logger.info("[BrowserAgent] Singleton browser dibuat (keep_alive=True).")
