@@ -705,8 +705,20 @@ def run_coding_benchmarks(llm, hermes):
             logging.warning("[Benchmark] Clone gagal (%s). Membuat direktori manual...",
                             clone_res.stderr.strip()[:100])
             os.makedirs(clone_dir, exist_ok=True)
-            # Init git di dalam direktori agar commit/push bisa berjalan nanti
             subprocess.run(["git", "init"], cwd=clone_dir, capture_output=True)
+            # Paksa nama branch ke 'main' agar push origin main tidak gagal
+            subprocess.run(
+                ["git", "symbolic-ref", "HEAD", "refs/heads/main"],
+                cwd=clone_dir, capture_output=True
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "nexus-agent@replit.com"],
+                cwd=clone_dir, capture_output=True
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Nexus DualBrain AI"],
+                cwd=clone_dir, capture_output=True
+            )
             subprocess.run(
                 ["git", "remote", "add", "origin",
                  f"https://github.com/{full_repo_name}.git"],
@@ -907,15 +919,24 @@ def run_coding_benchmarks(llm, hermes):
             logging.info("[Benchmark] Sandbox LULUS. Menyalin kode ke repo dan push ke GitHub...")
             # Salin file yang sudah lulus ke dalam clone_dir
             shutil.copy(file_name, os.path.join(clone_dir, file_name))
-            # Commit dan push
+            # Pastikan git config ada di repo ini
+            subprocess.run(
+                ["git", "-C", clone_dir, "config", "user.email", "nexus-agent@replit.com"],
+                capture_output=True
+            )
+            subprocess.run(
+                ["git", "-C", clone_dir, "config", "user.name", "Nexus DualBrain AI"],
+                capture_output=True
+            )
             subprocess.run(["git", "-C", clone_dir, "add", file_name], capture_output=True)
             subprocess.run(
                 ["git", "-C", clone_dir, "commit", "-m",
                  f"feat: add benchmark {task['level']} — sandbox PASSED"],
                 capture_output=True, text=True
             )
+            # Gunakan HEAD:main agar bisa push bahkan dari repo yang baru di-init manual
             push_res = subprocess.run(
-                ["git", "-C", clone_dir, "push", "origin", "main"],
+                ["git", "-C", clone_dir, "push", "--set-upstream", "origin", "HEAD:main"],
                 capture_output=True, text=True
             )
             if push_res.returncode == 0:
@@ -926,7 +947,7 @@ def run_coding_benchmarks(llm, hermes):
                     f"Repo: `{full_repo_name}`"
                 )
             else:
-                logging.error("[Auto-Publish] Gagal git push: %s", push_res.stderr[:200])
+                logging.error("[Auto-Publish] Gagal git push: %s", push_res.stderr[:300])
         else:
             logging.warning(
                 "[Benchmark] ❌ Sandbox GAGAL untuk %s. Kode TIDAK di-push ke GitHub.",
