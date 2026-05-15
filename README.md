@@ -55,6 +55,7 @@ sudo apt-get update && sudo apt-get install -y bubblewrap python3-pip
 ```bash
 pip install -r requirements.txt
 pip install git+https://github.com/NousResearch/hermes-agent.git
+# Install browser untuk Browser-Use
 playwright install chromium
 ```
 
@@ -64,6 +65,7 @@ playwright install chromium
 cp .env.example .env
 # Edit .env dan isi semua API key
 nano .env
+echo "GEMINI_KEY_1=your_key_here" >> .env
 ```
 
 Nilai wajib di `.env`:

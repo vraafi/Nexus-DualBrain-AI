@@ -130,273 +130,103 @@ class FiverrAgent:
             logger.error("[Fiverr] Tidak ada credential Fiverr di vault.")
             return False
 
-        # Cek apakah Fiverr sudah login di salah satu tab yang terbuka.
-        # Ini mencegah agent membuka halaman login padahal sesi sudah aktif.
-        LOGIN_KEYWORDS = ("login", "join", "signup", "sign-in", "challenge")
-        LOGGED_IN_PATHS = ("/users/", "/seller_dashboard", "/inbox", "/orders", "/manage_gigs")
-        try:
-            pages = self.browser.context.pages if self.browser.context else []
-            for p in pages:
-                try:
-                    url = p.url.lower()
-                    if "fiverr.com" not in url:
-                        continue
-                    if any(kw in url for kw in LOGIN_KEYWORDS):
-                        continue
-                    if any(path in url for path in LOGGED_IN_PATHS):
-                        logger.info(
-                            "[Fiverr] Sudah terdeteksi login di tab: %s -- skip login sequence.",
-                            p.url,
-                        )
-                        self.browser.page = p
-                        return True
-                except Exception:
-                    continue
-        except Exception:
-            pass
-
-        try:
-            self.browser.navigate("https://www.fiverr.com/login")
-            page = self.browser.page
-            page.wait_for_timeout(3000)
-
-            # Input email
-            email_input = page.locator("input[name='email'], input[type='email']").first
-            self.browser.human_type(email_input, creds["username"])
-
-            # Input password
-            password_input = page.locator("input[name='password'], input[type='password']").first
-            self.browser.human_type(password_input, creds["password"])
-
-            # Submit
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(5000)
-
-            if "login" in page.url or "challenge" in page.url:
-                logger.warning("[Fiverr] Login gagal atau perlu bantuan manual (CAPTCHA/2FA).")
-                self.browser.request_human_help("Fiverr Login (CAPTCHA/2FA)")
-                if "login" in page.url or "challenge" in page.url:
-                    return False
-
-            logger.info("[Fiverr] Login berhasil.")
-            return True
-
-        except Exception as exc:
-            logger.error("[Fiverr] Login error: %s", exc)
+        result = self.browser.execute_task(
+            f"Login ke Fiverr di https://www.fiverr.com/login. "
+            f"Email: {creds['username']}. Password: {creds['password']}. "
+            f"Setelah login berhasil, konfirmasi dengan melihat dashboard seller.",
+            max_steps=12
+        )
+        if "FAILED" in result:
+            logger.error("[Fiverr] Login error.")
             return False
+
+        logger.info("[Fiverr] Login berhasil.")
+        return True
 
     def check_active_orders(self) -> list[dict]:
         """
         Cek daftar order aktif yang menunggu penyelesaian.
         Return list of dict: {order_id, buyer_name, title, description, deadline, url}
         """
-        orders = []
+        result = self.browser.execute_task(
+            "Buka https://www.fiverr.com/orders/manage_orders. "
+            "List semua order yang statusnya 'In Progress' atau aktif. "
+            "Return JSON: [{order_id, buyer_name, title, deadline, url}, ...]",
+            max_steps=15
+        )
         try:
-            self.browser.navigate("https://www.fiverr.com/orders/manage_orders")
-            page = self.browser.page
-            page.wait_for_timeout(5000)
-
-            # Cari order cards yang aktif
-            order_cards = page.locator("div.order-container, article.order-card, div[class*='order-row']").all()
-
-            for card in order_cards[:5]:
-                try:
-                    title_elem = card.locator("h3, span[class*='title'], a[class*='title']").first
-                    title = title_elem.inner_text() if title_elem.is_visible() else "Unknown Order"
-
-                    buyer_elem = card.locator("span[class*='buyer'], a[class*='buyer']").first
-                    buyer = buyer_elem.inner_text() if buyer_elem.is_visible() else "Unknown Buyer"
-
-                    order_link = card.locator("a[href*='/orders/']").first
-                    url = order_link.get_attribute("href") if order_link.is_visible() else ""
-                    if url and not url.startswith("http"):
-                        url = "https://www.fiverr.com" + url
-
-                    orders.append({
-                        "order_id": url.split("/")[-1] if url else f"order_{len(orders)}",
-                        "buyer_name": buyer,
-                        "title": title,
-                        "description": "",  # akan diisi saat buka detail
-                        "url": url,
-                        "platform": "fiverr"
-                    })
-                except Exception as card_err:
-                    logger.warning("[Fiverr] Gagal parse order card: %s", card_err)
-
-            logger.info("[Fiverr] Ditemukan %d order aktif.", len(orders))
-            return orders
-
+            import re
+            match = re.search(r'\[.*?\]', result, re.DOTALL)
+            if match:
+                orders = json.loads(match.group(0))
+                for o in orders:
+                    o["platform"] = "fiverr"
+                    o["description"] = ""
+                logger.info("[Fiverr] Ditemukan %d order aktif.", len(orders))
+                return orders
         except Exception as exc:
             logger.error("[Fiverr] Gagal cek order: %s", exc)
-            return []
+        return []
 
     def get_order_details(self, order: dict) -> dict:
         """Buka halaman detail order dan ambil requirement lengkap dari buyer."""
         if not order.get("url"):
             return order
-        try:
-            self.browser.navigate(order["url"])
-            page = self.browser.page
-            page.wait_for_timeout(4000)
 
-            # Ambil requirement / pesan dari buyer
-            req_elem = page.locator("div[class*='requirements'], div[class*='buyer-message'], p[class*='requirement']").first
-            if req_elem.is_visible():
-                order["description"] = req_elem.inner_text()
-
-        except Exception as exc:
-            logger.warning("[Fiverr] Gagal ambil detail order %s: %s", order.get("order_id"), exc)
+        result = self.browser.execute_task(
+            f"Buka url order Fiverr ini: {order['url']}. "
+            f"Ambil requirement atau pesan dari buyer. "
+            f"Return plain text yang berisi pesan dari buyer.",
+            max_steps=10
+        )
+        if "FAILED" not in result:
+            order["description"] = result
         return order
 
     def reply_to_buyer(self, order: dict, message: str) -> bool:
         """Kirim pesan balasan ke buyer di halaman order."""
-        try:
-            if order.get("url"):
-                self.browser.navigate(order["url"])
-            page = self.browser.page
-            page.wait_for_timeout(3000)
-
-            msg_box = page.locator("div[contenteditable='true'], textarea[placeholder*='message']").last
-            if msg_box.is_visible():
-                self.browser.human_type(msg_box, message)
-                page.keyboard.press("Enter")
-                page.wait_for_timeout(2000)
-                logger.info("[Fiverr] Pesan terkirim ke buyer %s.", order.get("buyer_name"))
-                return True
-        except Exception as exc:
-            logger.error("[Fiverr] Gagal reply ke buyer: %s", exc)
-        return False
+        result = self.browser.execute_task(
+            f"Buka halaman order Fiverr: {order.get('url')}. "
+            f"Ketik pesan ini di chat box: {message}. "
+            f"Klik tombol kirim pesan.",
+            max_steps=15
+        )
+        return "FAILED" not in result
 
     def deliver_order(self, order: dict, file_path: str, delivery_message: str) -> bool:
         """
         Kirim delivery ke buyer — upload file hasil kerja + pesan pengiriman.
         Ini langkah final sebelum buyer review dan bayar.
         """
-        try:
-            self.browser.navigate(order.get("url", "https://www.fiverr.com/orders/manage_orders"))
-            page = self.browser.page
-            page.wait_for_timeout(3000)
-
-            # Klik tombol Deliver Now
-            deliver_btn = page.get_by_role("button", name="Deliver Now")
-            if not deliver_btn.is_visible():
-                deliver_btn = page.locator("button:has-text('Deliver'), a:has-text('Deliver Now')").first
-
-            if deliver_btn.is_visible():
-                self.browser.human_click(deliver_btn)
-                page.wait_for_timeout(3000)
-
-            # Upload file
-            file_input = page.locator("input[type='file']").first
-            if file_input:
-                file_input.set_input_files(file_path)
-                page.wait_for_timeout(3000)
-
-            # Tulis pesan delivery
-            msg_box = page.locator("textarea[placeholder*='delivery'], div[contenteditable][class*='delivery']").first
-            if msg_box.is_visible():
-                self.browser.human_type(msg_box, delivery_message)
-
-            # Submit delivery
-            submit_btn = page.get_by_role("button", name="Submit")
-            if not submit_btn.is_visible():
-                submit_btn = page.locator("button:has-text('Submit Delivery')").first
-            self.browser.human_click(submit_btn)
-            page.wait_for_timeout(3000)
-
-            logger.info("[Fiverr] Order %s berhasil di-deliver.", order.get("order_id"))
-            return True
-
-        except Exception as exc:
-            logger.error("[Fiverr] Gagal deliver order: %s", exc)
-            return False
+        result = self.browser.execute_task(
+            f"Buka halaman order Fiverr: {order.get('url', 'https://www.fiverr.com/orders/manage_orders')}. "
+            f"Klik tombol 'Deliver Now'. "
+            f"Upload file dari path: {file_path}. "
+            f"Tulis pesan delivery: {delivery_message[:200]}. "
+            f"Klik Submit.",
+            max_steps=20
+        )
+        return "FAILED" not in result
 
     def check_gig_count(self) -> int:
         """
         Cek jumlah Gig AKTIF (bukan draft) di halaman Manage Gigs.
-
-        Tiga strategi deteksi berurutan:
-          1. Hitung badge/label 'Active' yang muncul di setiap baris gig
-          2. Hitung semua baris gig lalu kurangi baris bertanda 'Draft'
-          3. Fallback: kembalikan 0 jika tidak bisa bedakan aktif vs draft
         """
-        from identity_manager import IdentityManager
+        result = self.browser.execute_task(
+            "Buka dashboard seller Fiverr dan buka halaman Manage Gigs. "
+            "Hitung jumlah gig yang berstatus 'Active'. "
+            "Return JSON: {count: int}",
+            max_steps=15
+        )
         try:
-            # Prioritas: ambil username dari URL tab Fiverr yang aktif di browser
-            # (lebih andal daripada credential yang bisa berupa email/placeholder)
-            username = ""
-            try:
-                pages = self.browser.context.pages if self.browser.context else []
-                for p in pages:
-                    url = p.url
-                    if "fiverr.com/users/" in url:
-                        parts = url.split("/users/")
-                        if len(parts) > 1:
-                            candidate = parts[1].split("/")[0]
-                            if candidate and candidate != "username_anda":
-                                username = candidate
-                                logger.info("[Fiverr] Username dari URL tab: %s", username)
-                                break
-            except Exception:
-                pass
-
-            # Fallback: credential (hanya jika bukan email atau placeholder)
-            if not username:
-                identity = IdentityManager()
-                creds = identity.get_credential("fiverr")
-                raw = (creds or {}).get("username", "")
-                if raw and "@" not in raw and raw != "username_anda":
-                    username = raw
-
-            manage_url = (
-                f"https://www.fiverr.com/users/{username}/manage_gigs"
-                if username else "https://www.fiverr.com/seller_dashboard"
-            )
-            logger.info("[Fiverr] Navigasi ke halaman manage gigs: %s", manage_url)
-            self.browser.navigate(manage_url)
-            page = self.browser.page
-            page.wait_for_timeout(5000)
-
-            # Strategi 1: hitung badge 'Active' secara eksplisit
-            # Fiverr menampilkan status Active/Paused/Draft di setiap baris gig.
-            active_badges = page.locator(
-                "span:has-text('Active'), "
-                "div[class*='status']:has-text('Active'), "
-                "td[class*='status']:has-text('Active'), "
-                "span[class*='badge']:has-text('Active')"
-            ).all()
-            active_count = len([el for el in active_badges if el.is_visible()])
-            if active_count > 0:
-                logger.info("[Fiverr] Ditemukan %d Gig aktif (via badge status).", active_count)
-                return active_count
-
-            # Strategi 2: semua baris gig dikurangi baris Draft
-            all_gig_rows = page.locator(
-                "tr[data-gig-id], div[data-gig-id], "
-                "article[class*='gig-card'], div[class*='gig-item']"
-            ).all()
-            draft_rows = page.locator(
-                "tr[data-gig-id]:has-text('Draft'), "
-                "div[data-gig-id]:has-text('Draft'), "
-                "article[class*='gig-card']:has-text('Draft'), "
-                "div[class*='gig-item']:has-text('Draft')"
-            ).all()
-            if all_gig_rows:
-                active_count = max(0, len(all_gig_rows) - len(draft_rows))
-                logger.info(
-                    "[Fiverr] Total baris gig: %d | Draft: %d | Aktif: %d",
-                    len(all_gig_rows), len(draft_rows), active_count
-                )
-                return active_count
-
-            # Strategi 3: tidak bisa bedakan aktif vs draft -- kembalikan 0
-            # supaya agent mencoba membuat gig baru daripada berhenti salah.
-            logger.info("[Fiverr] Tidak ada baris gig terdeteksi di halaman manage_gigs.")
-            return 0
-
-        except Exception as exc:
-            logger.warning("[Fiverr] Gagal cek jumlah gig: %s", exc)
-            return 0
+            import re
+            match = re.search(r'\{.*?\}', result, re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+                return data.get("count", 0)
+        except Exception:
+            pass
+        return 0
 
     def _generate_dynamic_template(self) -> dict:
         """
@@ -456,6 +286,10 @@ class FiverrAgent:
         logger.info("[Fiverr] Deskripsi gig: %d karakter.", len(description))
         return description
 
+    def _click_next(self, page=None):
+        """Helper backward compat, walau di execute_task tidak perlu explicitly click next step-by-step biasa"""
+        pass
+
     def create_gig(self, template: dict = None) -> bool:
         """
         Buat Gig baru di Fiverr secara otomatis.
@@ -463,278 +297,41 @@ class FiverrAgent:
         """
         if not template:
             template = self._generate_dynamic_template()
-            
+
         logger.info("[Fiverr] Membuat Gig baru: '%s' ...", template.get("title", "Python Service"))
 
         description = self._generate_gig_description(template)
 
+        # Download temporary image
+        import urllib.request
+        img_path = os.path.join(os.getcwd(), "gig_image.jpg")
         try:
-            page = self.browser.page
-            
-            # ── Step 0: Navigasi ke halaman Manage Gigs ────────────────────
-            # Menggunakan URL spesifik user agar tepat sasaran
-            logger.info("[Fiverr] Navigasi ke halaman Manage Gigs...")
-            # Ambil username dari URL tab aktif (sama seperti check_gig_count)
-            _username = ""
-            try:
-                _pages = self.browser.context.pages if self.browser.context else []
-                for _p in _pages:
-                    if "fiverr.com/users/" in _p.url:
-                        _parts = _p.url.split("/users/")
-                        if len(_parts) > 1:
-                            _candidate = _parts[1].split("/")[0]
-                            if _candidate and _candidate != "username_anda":
-                                _username = _candidate
-                                break
-            except Exception:
-                pass
-            _manage_url = (
-                f"https://www.fiverr.com/users/{_username}/manage_gigs"
-                if _username else "https://www.fiverr.com/seller_dashboard"
-            )
-            self.browser.navigate(_manage_url)
-            page.wait_for_timeout(6000)
-            
-            # Cari tombol Create a new Gig
-            create_btn = page.locator("button:has-text('Create a new Gig'), a:has-text('Create a new Gig')").first
-            if create_btn.is_visible(timeout=5000):
-                self.browser.human_click(create_btn)
-                page.wait_for_timeout(6000)
-            else:
-                # Fallback URL jika tombol tidak terlihat
-                logger.warning("[Fiverr] Tombol Create Gig tidak terlihat, mencoba direct URL fallback...")
-                self.browser.navigate("https://www.fiverr.com/gigs/new")
-                page.wait_for_timeout(6000)
+            safe_title = template["title"].replace(" ", "+")[:40]
+            img_url = f"https://dummyimage.com/712x430/282c34/61dafb.jpg&text={safe_title}"
+            urllib.request.urlretrieve(img_url, img_path)
+        except Exception:
+            pass
 
-            # ── Step 1: Judul Gig ──────────────────────────────────────────
-            # Fiverr sering ganti class name; coba semua selector yang dikenal
-            TITLE_SELECTORS = [
-                "input[name='title']",
-                "input[placeholder*='title' i]",
-                "input[data-field='title']",
-                "input[id*='title']",
-                "input[class*='title']",
-                "div[class*='gig-title'] input",
-                "div[data-testid*='title'] input",
-                "label:has-text('Gig title') + input",
-                "label:has-text('Gig title') ~ input",
-                "section input[type='text']:first-of-type",
-            ]
-            title_input = None
-            for _sel in TITLE_SELECTORS:
-                try:
-                    _candidate = page.locator(_sel).first
-                    if _candidate.is_visible(timeout=3000):
-                        title_input = _candidate
-                        logger.info("[Fiverr] Input judul ditemukan via: %s", _sel)
-                        break
-                except Exception:
-                    continue
-            if title_input is None:
-                logger.warning("[Fiverr] Input judul tidak ditemukan setelah coba %d selector.", len(TITLE_SELECTORS))
-                return False
-            title_input.triple_click()
-            self.browser.human_type(title_input, template["title"])
-            page.wait_for_timeout(1000)
+        # Use browser-use to go through the Gig creation flow
+        # In reality, this flow is very complex and might require multiple execute_task calls,
+        # but for this agent we can give it a broad task.
+        task = (
+            f"Buat Fiverr gig baru.\n"
+            f"1. Navigasi ke halaman Manage Gigs, klik Create a new Gig.\n"
+            f"2. Judul: '{template['title']}'\n"
+            f"3. Kategori: Programming & Tech.\n"
+            f"4. Masukkan tags: {', '.join(template['tags'][:5])}.\n"
+            f"5. Lanjut ke pricing. Isi Basic: {template['basic']['price']}$, {template['basic']['days']} days. "
+            f"Standard: {template['standard']['price']}$, {template['standard']['days']} days. "
+            f"Premium: {template['premium']['price']}$, {template['premium']['days']} days.\n"
+            f"6. Lanjut ke description. Isi description: '{description[:500]}...'\n"
+            f"7. Lanjut ke requirements. Tambahkan requirement: '{template.get('requirements', ['Please describe your task'])[0]}'.\n"
+            f"8. Lanjut ke gallery. Upload file gambar di '{img_path}'.\n"
+            f"9. Publish gig."
+        )
 
-            # ── Step 2: Kategori — Programming & Tech ─────────────────────
-            # Fiverr pakai dropdown atau combo — coba keduanya
-            cat_selectors = [
-                "select[name='category_id']",
-                "div[data-testid='category-select']",
-                "div[class*='category'] button",
-                "button[aria-label*='category' i]",
-            ]
-            for sel in cat_selectors:
-                cat_el = page.locator(sel).first
-                if cat_el.is_visible(timeout=2000):
-                    self.browser.human_click(cat_el)
-                    page.wait_for_timeout(1500)
-                    # Coba pilih opsi Programming
-                    opt = page.locator(
-                        "option:has-text('Programming'), "
-                        "li:has-text('Programming'), "
-                        "div[role='option']:has-text('Programming')"
-                    ).first
-                    if opt.is_visible(timeout=2000):
-                        self.browser.human_click(opt)
-                        page.wait_for_timeout(1000)
-                    break
-
-            # ── Step 3: 5 Tags unik ────────────────────────────────────────
-            tag_input = page.locator(
-                "input[placeholder*='tag' i], input[name*='tag'], "
-                "div[class*='tags'] input, input[data-field='tags']"
-            ).first
-            if tag_input.is_visible(timeout=3000):
-                for tag in template["tags"][:5]:
-                    tag_input.click()
-                    page.wait_for_timeout(300)
-                    self.browser.human_type(tag_input, tag)
-                    page.wait_for_timeout(500)
-                    # Tekan Enter atau klik opsi dropdown yang muncul
-                    suggestion = page.locator(
-                        f"li:has-text('{tag}'), div[role='option']:has-text('{tag}')"
-                    ).first
-                    if suggestion.is_visible(timeout=1500):
-                        self.browser.human_click(suggestion)
-                    else:
-                        page.keyboard.press("Enter")
-                    page.wait_for_timeout(600)
-
-            # ── Step 4: Lanjut ke step berikutnya ─────────────────────────
-            self._click_next(page)
-            page.wait_for_timeout(4000)
-
-            # ── Step 5: Deskripsi (1000-1200 karakter) ────────────────────
-            desc_box = page.locator(
-                "div[contenteditable='true'], textarea[name='description'], "
-                "div[class*='description-input'] div[contenteditable]"
-            ).first
-            if desc_box.is_visible(timeout=8000):
-                self.browser.human_click(desc_box)
-                page.wait_for_timeout(500)
-                # Gunakan keyboard shortcut untuk clear dan isi ulang
-                page.keyboard.press("Control+a")
-                page.keyboard.press("Delete")
-                self.browser.human_type(desc_box, description)
-                page.wait_for_timeout(1000)
-
-            # ── Step 6: Paket Harga ────────────────────────────────────────
-            for pkg_key in ["basic", "standard", "premium"]:
-                pkg = template[pkg_key]
-                try:
-                    # Label paket
-                    lbl = page.locator(
-                        f"input[name*='{pkg_key}'][name*='name'], "
-                        f"input[data-package='{pkg_key}'][name*='name'], "
-                        f"input[placeholder*='{pkg_key}' i]"
-                    ).first
-                    if lbl.is_visible(timeout=2000):
-                        lbl.triple_click()
-                        self.browser.human_type(lbl, pkg["label"])
-
-                    # Harga
-                    price_inp = page.locator(
-                        f"input[name*='{pkg_key}'][name*='price'], "
-                        f"input[data-package='{pkg_key}'][name*='price']"
-                    ).first
-                    if price_inp.is_visible(timeout=2000):
-                        price_inp.triple_click()
-                        self.browser.human_type(price_inp, str(pkg["price"]))
-
-                    # Waktu pengiriman
-                    delivery_sel = page.locator(
-                        f"select[name*='{pkg_key}'][name*='delivery'], "
-                        f"select[data-package='{pkg_key}']"
-                    ).first
-                    if delivery_sel.is_visible(timeout=2000):
-                        delivery_sel.select_option(str(pkg["days"]))
-
-                    # Revisi
-                    rev_sel = page.locator(
-                        f"select[name*='{pkg_key}'][name*='revision'], "
-                        f"select[data-package='{pkg_key}'][name*='revision']"
-                    ).first
-                    if rev_sel.is_visible(timeout=2000):
-                        rev_val = "unlimited" if pkg["revisions"] == 999 else str(pkg["revisions"])
-                        rev_sel.select_option(rev_val)
-
-                    page.wait_for_timeout(500)
-                except Exception as pkg_err:
-                    logger.warning("[Fiverr] Gagal isi paket %s: %s", pkg_key, pkg_err)
-
-            # ── Step 7: Lanjut ke Buyer Requirements ──────────────────────
-            self._click_next(page)
-            page.wait_for_timeout(4000)
-
-            # ── Step 8: Buyer Requirements ─────────────────────────────────
-            # Pertanyaan ini memastikan agent mendapat info cukup dari buyer
-            add_req_btn = page.locator(
-                "button:has-text('Add Requirement'), "
-                "button:has-text('Add Question'), "
-                "a:has-text('Add Requirement')"
-            ).first
-            for req_text in template.get("requirements", []):
-                try:
-                    if add_req_btn.is_visible(timeout=3000):
-                        self.browser.human_click(add_req_btn)
-                        page.wait_for_timeout(1500)
-                    req_input = page.locator(
-                        "input[placeholder*='requirement' i], "
-                        "textarea[placeholder*='question' i], "
-                        "div[class*='requirement'] input"
-                    ).last
-                    if req_input.is_visible(timeout=3000):
-                        self.browser.human_type(req_input, req_text)
-                        # Tandai sebagai required
-                        req_checkbox = page.locator(
-                            "input[type='checkbox'][name*='required'], "
-                            "label:has-text('Required')"
-                        ).last
-                        if req_checkbox.is_visible(timeout=2000):
-                            self.browser.human_click(req_checkbox)
-                        page.wait_for_timeout(500)
-                except Exception as req_err:
-                    logger.warning("[Fiverr] Gagal tambah requirement: %s", req_err)
-
-            # ── Step 9: Gallery (Wajib Upload Gambar) ──────────────────────
-            self._click_next(page)
-            page.wait_for_timeout(4000)
-            
-            logger.info("[Fiverr] Step Gallery: Mengunduh dan upload gambar placeholder...")
-            import urllib.request
-            img_path = os.path.join(os.getcwd(), "gig_image.jpg")
-            try:
-                # Bikin title URL-safe untuk text placeholder
-                safe_title = template["title"].replace(" ", "+")[:40]
-                img_url = f"https://dummyimage.com/712x430/282c34/61dafb.jpg&text={safe_title}"
-                urllib.request.urlretrieve(img_url, img_path)
-                
-                # Cari input file (biasanya tersembunyi, pakai CSS selector)
-                file_input = page.locator("input[type='file'][accept*='image']").first
-                if file_input.is_visible(timeout=5000) or file_input.count() > 0:
-                    # set_input_files bisa bekerja pada input hidden
-                    file_input.set_input_files(img_path)
-                    page.wait_for_timeout(5000)
-                    logger.info("[Fiverr] Gambar berhasil diunggah.")
-                else:
-                    logger.warning("[Fiverr] Elemen upload gambar tidak ditemukan.")
-            except Exception as e:
-                logger.warning("[Fiverr] Gagal upload gambar gallery: %s", e)
-
-            # Lanjut ke Publish
-            self._click_next(page)
-            page.wait_for_timeout(4000)
-
-            # ── Step 10: Publish Gig ───────────────────────────────────────
-            publish_btn = page.locator(
-                "button:has-text('Publish'), button:has-text('Save & Publish'), "
-                "button:has-text('Publish Gig')"
-            ).first
-            if publish_btn.is_visible(timeout=10000):
-                self.browser.human_click(publish_btn)
-                page.wait_for_timeout(6000)
-                logger.info("[Fiverr] Gig '%s' berhasil dipublikasikan!", template["title"])
-                return True
-            else:
-                logger.warning("[Fiverr] Tombol Publish tidak muncul — mungkin ada validasi yang belum terpenuhi atau perlu review manual Fiverr.")
-                return False
-
-        except Exception as exc:
-            logger.error("[Fiverr] Gagal membuat Gig: %s", exc)
-            return False
-
-    def _click_next(self, page):
-        """Helper: klik tombol Next / Save & Continue."""
-        next_btn = page.locator(
-            "button:has-text('Next'), button:has-text('Save & Continue'), "
-            "button:has-text('Continue'), a:has-text('Next')"
-        ).first
-        if next_btn.is_visible(timeout=5000):
-            self.browser.human_click(next_btn)
-        else:
-            logger.warning("[Fiverr] Tombol Next tidak ditemukan.")
+        result = self.browser.execute_task(task, max_steps=40)
+        return "FAILED" not in result
 
     def ensure_gig_exists(self) -> bool:
         """
@@ -748,7 +345,7 @@ class FiverrAgent:
 
         logger.info("[Fiverr] Hanya ada %d Gig. Membuat Gig dinamis baru...", count)
         success = self.create_gig()
-        
+
         if success:
             logger.info("[Fiverr] Gig dinamis berhasil dibuat dan dipublikasikan.")
         else:
@@ -762,57 +359,10 @@ class FiverrAgent:
         atau optimasi Gig ranking dengan update deskripsi.
         Return True jika ada aktivitas yang dilakukan.
         """
-        logger.info("[Fiverr] Memeriksa Buyer Requests (jika tersedia)...")
-        try:
-            self.browser.navigate("https://www.fiverr.com/users/selling/buyer_requests")
-            page = self.browser.page
-            page.wait_for_timeout(5000)
-
-            # Cek apakah fitur Buyer Request masih ada
-            requests_list = page.locator("div.request-row, article.buyer-request").all()
-            if not requests_list:
-                logger.info("[Fiverr] Buyer Request tidak tersedia. Gig sudah aktif menunggu order masuk.")
-                return False
-
-            sent_offers = 0
-            for req in requests_list[:3]:
-                try:
-                    title_elem = req.locator("h3, p[class*='title']").first
-                    title = title_elem.inner_text() if title_elem.is_visible() else ""
-
-                    desc_elem = req.locator("p[class*='description'], div[class*='description']").first
-                    desc = desc_elem.inner_text() if desc_elem.is_visible() else ""
-
-                    # Buat penawaran via LLM
-                    prompt = (
-                        f"Buat offer singkat (maks 100 kata) untuk Fiverr Buyer Request berikut:\n"
-                        f"Title: {title}\nDescription: {desc}\n"
-                        "Tulis dalam bahasa profesional Inggris. Tekankan bahwa kamu bisa deliver dalam 24 jam."
-                    )
-                    offer_text = self.llm.generate_content(prompt)
-                    if not offer_text:
-                        continue
-
-                    # Klik Send Offer
-                    offer_btn = req.locator("button:has-text('Send Offer'), a:has-text('Send Offer')").first
-                    if offer_btn.is_visible():
-                        self.browser.human_click(offer_btn)
-                        page.wait_for_timeout(2000)
-
-                        offer_input = page.locator("textarea[placeholder*='offer'], div[contenteditable]").last
-                        if offer_input.is_visible():
-                            self.browser.human_type(offer_input, offer_text)
-                            submit = page.locator("button:has-text('Submit'), button:has-text('Send')").first
-                            self.browser.human_click(submit)
-                            sent_offers += 1
-                            page.wait_for_timeout(3000)
-
-                except Exception as req_err:
-                    logger.warning("[Fiverr] Error pada buyer request: %s", req_err)
-
-            logger.info("[Fiverr] Sent %d offers dari buyer requests.", sent_offers)
-            return sent_offers > 0
-
-        except Exception as exc:
-            logger.error("[Fiverr] Error di buyer requests: %s", exc)
-            return False
+        result = self.browser.execute_task(
+            "Buka https://www.fiverr.com/users/selling/buyer_requests. "
+            "Cari request dari buyer. Jika ada, buat offer singkat yang profesional (max 100 kata) "
+            "dan kirim offer tersebut. Return 'BERHASIL' jika mengirim offer, atau 'TIDAK_ADA' jika kosong.",
+            max_steps=20
+        )
+        return "BERHASIL" in result
