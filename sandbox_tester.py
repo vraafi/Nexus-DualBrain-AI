@@ -65,7 +65,7 @@ class SandboxTester:
                  # Step 2: Test Execution inside llm-sandbox
                  from llm_sandbox import SandboxSession
 
-                 with SandboxSession(lang="python", verbose=False) as session:
+                 with SandboxSession(lang="python", backend="local", verbose=False) as session:
                      with open(abs_code_path, "r") as f:
                          code_to_run = f.read()
 
