@@ -33,6 +33,18 @@ class FreelanceAgent:
             return False
 
         try:
+            # ── Cek apakah Upwork sudah login di salah satu tab yang terbuka ──
+            # Ini mencegah agent membuka halaman login padahal user sudah login
+            # di tab lain (misal: tab yang sudah aktif sebelum agent dijalankan).
+            already_logged_in_tab = self.browser._find_logged_in_upwork_tab()
+            if already_logged_in_tab is not None:
+                self.logger.info(
+                    "✅ Upwork sudah terdeteksi login di tab: %s — skip login sequence.",
+                    already_logged_in_tab.url,
+                )
+                self.browser.page = already_logged_in_tab
+                return True
+
             page = self.browser.page
             self.browser.navigate("https://www.upwork.com/ab/account-security/login")
             page.wait_for_timeout(3000 + int(1000 * random.random()))
