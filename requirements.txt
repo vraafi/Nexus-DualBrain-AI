@@ -38,3 +38,6 @@ camoufox==0.4.11
 # Docs: https://github.com/NousResearch/hermes-agent
 # ─────────────────────────────────────────────────────────────────
 setuptools<70
+
+# --- LLM Sandbox ---
+llm-sandbox>=0.1.0
