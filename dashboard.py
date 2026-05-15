@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify, request
 import sqlite3
 import os
 import psutil
@@ -107,5 +107,58 @@ def api_data():
         "finance": get_financial_stats()
     })
 
+
+# --- CashClaw Integration Endpoints ---
+# These endpoints act as the bridge between CashClaw's Node.js brain and Nexus DualBrain's Python browser automation.
+
+@app.route('/api/inbox', methods=['GET'])
+def cashclaw_inbox():
+    # Return empty for now as placeholder to allow CashClaw to start without errors
+    # In full implementation, this would instantiate BrowserAgent and call FreelanceAgent.scrape_jobs()
+    return jsonify({"tasks": []})
+
+@app.route('/api/view', methods=['GET'])
+def cashclaw_view_task():
+    task_id = request.args.get('task')
+    # Placeholder return
+    return jsonify({"task": {"id": task_id, "description": "Mocked task from DualBrain", "status": "open", "messages": []}})
+
+@app.route('/api/quote', methods=['POST'])
+def cashclaw_quote_task():
+    data = request.json
+    task_id = data.get("taskId")
+    price_eth = data.get("priceEth")
+    message = data.get("message")
+
+    # In full implementation:
+    # 1. Initialize BrowserAgent
+    # 2. Call FreelanceAgent.submit_proposal(job_data={"title": task_id}, branding_context=...)
+    return jsonify({"status": "success", "message": f"Quoted {price_eth} on {task_id}"})
+
+@app.route('/api/decline', methods=['POST'])
+def cashclaw_decline_task():
+    data = request.json
+    return jsonify({"status": "success"})
+
+@app.route('/api/submit', methods=['POST'])
+def cashclaw_submit_work():
+    data = request.json
+    task_id = data.get("taskId")
+    result = data.get("result")
+
+    # In full implementation:
+    # Call FreelanceAgent.deliver_work(job_data={"title": task_id}, file_path=...)
+    return jsonify({"status": "success", "message": f"Work submitted for {task_id}"})
+
+@app.route('/api/message', methods=['POST'])
+def cashclaw_send_message():
+    data = request.json
+    task_id = data.get("taskId")
+    content = data.get("content")
+
+    # In full implementation:
+    # Call FreelanceAgent.check_messages_and_negotiate() or a dedicated reply method
+    return jsonify({"status": "success", "message": f"Message sent to {task_id}"})
+
 if __name__ == "__main__":
-    app.run(host='127.0.0.1', port=5000)
+    app.run(host='127.0.0.1', port=3778)
