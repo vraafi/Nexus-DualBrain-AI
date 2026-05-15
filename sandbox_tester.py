@@ -57,7 +57,10 @@ class SandboxTester:
     def _search_duckduckgo(self, query):
         """Cari solusi error menggunakan DuckDuckGo (tidak butuh API key)."""
         try:
-            from duckduckgo_search import DDGS
+            try:
+                from ddgs import DDGS
+            except ImportError:
+                from duckduckgo_search import DDGS
             with DDGS() as ddgs:
                 results = list(ddgs.text(query, max_results=3))
             if results:
@@ -65,7 +68,7 @@ class SandboxTester:
                 return "\n\n".join(snippets[:3])
             return ""
         except ImportError:
-            logging.warning("duckduckgo_search tidak terinstall. Skip DDG search.")
+            logging.warning("ddgs/duckduckgo_search tidak terinstall. Skip DDG search.")
             return ""
         except Exception as e:
             logging.warning(f"DuckDuckGo search error: {e}")
@@ -212,7 +215,7 @@ class SandboxTester:
 
                 # Step 1: Static Analysis
                 is_valid, static_errors = self._static_analysis(abs_code_path)
-                if not is_valid and "SyntaxError" in static_errors:
+                if not is_valid and static_errors.strip():
                     raise Exception(f"Static Analysis Failed:\n{static_errors}")
 
                 # Step 2: Eksekusi (llm-sandbox Docker → subprocess fallback)
@@ -229,22 +232,25 @@ class SandboxTester:
                 logging.warning(f"Execution failed: {error_msg}")
                 logging.info("Initiating Self-Correction Loop...")
 
-                search_context = self._search_error(error_msg[-200:])
+                search_context = self._search_error(error_msg[-500:])
 
                 if self.llm:
                     prompt = (
                         f"The code at {code_path} failed with this error:\n{error_msg}\n\n"
                         f"Search context:\n{search_context}\n\n"
-                        "Please provide the COMPLETE fixed Python code (no markdown fences, raw code only)."
+                        "Return ONLY the complete fixed Python code. "
+                        "No markdown fences, no explanations, no leading spaces before imports."
                     )
                     logging.info("Asking LLM to fix code based on error and search context.")
                     try:
                         fixed_code = self.llm.generate_content(prompt, use_codegen_model=True)
                         if fixed_code:
                             if "```python" in fixed_code:
-                                fixed_code = fixed_code.split("```python")[1].split("```")[0].strip()
+                                fixed_code = fixed_code.split("```python")[1].split("```")[0]
                             elif "```" in fixed_code:
-                                fixed_code = fixed_code.split("```")[1].strip()
+                                fixed_code = fixed_code.split("```")[1]
+                            import textwrap as _tw
+                            fixed_code = _tw.dedent(fixed_code).strip()
                             with open(code_path, "w") as f:
                                 f.write(fixed_code)
                             logging.info("Applied LLM fix to code.")
