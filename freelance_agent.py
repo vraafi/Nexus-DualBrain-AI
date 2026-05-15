@@ -76,71 +76,134 @@ class FreelanceAgent:
             self.logger.error("Failed to parse scraped jobs: %s", e)
         return []
 
+    def _keyword_filter(self, jobs_list: list) -> list:
+        """
+        Filter berbasis keyword sebagai fallback WAJIB ketika LLM gagal.
+        Lebih baik melamar semua job yang lolos keyword daripada tidak melamar satupun.
+        """
+        negative_keywords = [
+            "zoom", "meeting", "hardware", "ios app", "android app", "c#", ".net",
+            "video call", "logo design", "photoshop", "figma", "illustrator",
+            "nda required", "in-person", "on-site"
+        ]
+        positive_keywords = [
+            "python", "automation", "scraping", "api", "bot", "script",
+            "data", "excel", "csv", "selenium", "playwright", "flask",
+            "django", "fastapi", "rest", "json", "integration", "etl",
+            "web scraping", "crawler", "pandas", "numpy"
+        ]
+        approved = []
+        for job in jobs_list:
+            text = (job.get('title', '') + " " + job.get('description', '')).lower()
+            has_negative = any(kw in text for kw in negative_keywords)
+            has_positive = any(kw in text for kw in positive_keywords)
+            if not has_negative and has_positive:
+                approved.append(job)
+                self.logger.info("[KeywordFilter] Disetujui: %s", job.get('title'))
+        # Jika tidak ada yang lolos keyword, kembalikan semua job asli agar tidak stuck
+        if not approved:
+            self.logger.warning(
+                "[KeywordFilter] Tidak ada job lolos keyword — kembalikan semua %d job.",
+                len(jobs_list)
+            )
+            return jobs_list
+        return approved
+
+    def _extract_json_from_response(self, response: str):
+        """
+        Coba ekstrak JSON array dari berbagai format respons LLM.
+        Menangani: JSON murni, markdown code block, teks campuran.
+        """
+        # Bersihkan markdown code block
+        if "```json" in response:
+            response = response.split("```json")[1].split("```")[0].strip()
+        elif "```" in response:
+            between = response.split("```")
+            if len(between) >= 3:
+                response = between[1].strip()
+
+        # Cari array JSON dengan regex — paling andal
+        match = re.search(r'\[[\s\S]*?\]', response)
+        if match:
+            return json.loads(match.group(0))
+
+        # Cari posisi [ dan ] secara manual
+        start = response.find("[")
+        end = response.rfind("]")
+        if start != -1 and end != -1 and end > start:
+            return json.loads(response[start:end + 1].strip())
+
+        raise ValueError(f"Tidak ada JSON array ditemukan dalam respons: {response[:150]}")
+
     def filter_jobs_batch(self, jobs_list: list) -> list:
-        """Batch evaluate jobs using negotiation model (26b) — hemat quota."""
+        """
+        Batch evaluate jobs using LLM. Fallback ke keyword filter jika LLM gagal.
+
+        FIX KRITIS: Sebelumnya jika LLM gagal parse, return [] — agent stuck tanpa melamar.
+        Sekarang: LLM gagal → keyword fallback → jika tetap kosong → kembalikan semua job.
+        """
         self.logger.info("Batch filtering %d jobs...", len(jobs_list))
 
-        negative_keywords = [
-            "zoom", "meeting", "hardware", "ios", "c#", "video call",
-            "logo", "design", "photoshop"
-        ]
-        candidates = [
-            job for job in jobs_list
-            if not any(
-                kw in (job.get('title', '') + " " + job.get('description', '')).lower()
-                for kw in negative_keywords
-            )
-        ]
-
-        if not candidates:
+        if not jobs_list:
             return []
 
-        prompt = (
-            "You are an AI filtering system. Analyze the following freelance jobs. "
-            "Determine if each job can be 100% completed autonomously by an AI agent "
-            "restricted to writing Python code, web scraping, and API integrations. "
-            "The AI CANNOT do video calls, subjective design, hardware tasks, or require "
-            "personal accounts or NDA access.\n\n"
-            "Respond ONLY with a JSON array: "
-            "[{\"index\": int, \"is_autonomous\": bool, \"reason\": string}]\n\n"
-        )
-        for i, job in enumerate(candidates):
-            prompt += (
-                f"Job {i}:\nTitle: {job.get('title')}\n"
-                f"Description: {job.get('description', '')[:300]}\n---\n"
+        # ── LANGKAH 1: Prompt yang SANGAT EKSPLISIT tentang format JSON ──────
+        # Gemma model sering mengabaikan "Respond ONLY with JSON".
+        # Solusi: taruh format JSON di AWAL prompt, gunakan kata yang tegas.
+        job_lines = ""
+        for i, job in enumerate(jobs_list):
+            job_lines += (
+                f"\nINDEX {i}: {job.get('title', 'Unknown')}\n"
+                f"DESC: {job.get('description', '')[:250]}\n"
             )
 
-        response = self.llm.generate_content(prompt, require_json=True, use_negotiation_model=True)
-        approved_jobs = []
+        prompt = (
+            "OUTPUT FORMAT (WAJIB, JANGAN UBAH FORMAT INI):\n"
+            '[{"index":0,"ok":true},{"index":1,"ok":false}]\n\n'
+            "TUGAS: Untuk setiap job di bawah, tentukan apakah bisa dikerjakan 100% otomatis "
+            "oleh AI yang hanya bisa: Python, web scraping, REST API, data processing.\n"
+            "TIDAK BISA: video call, desain grafis subjektif, hardware fisik, kunjungan langsung.\n"
+            "JAWAB HANYA dengan JSON array seperti format di atas. "
+            "JANGAN tambahkan teks, penjelasan, atau markdown apapun.\n\n"
+            f"JOBS:{job_lines}"
+        )
+
+        # ── LANGKAH 2: Panggil LLM (tanpa require_json karena gemma tidak support) ──
+        # require_json=False karena gemma tidak support responseMimeType
+        response = self.llm.generate_content(prompt, use_negotiation_model=True)
+
+        # ── LANGKAH 3: Parse respons dengan fallback bertingkat ───────────────
         if response:
             try:
-                clean_response = response
-                match = re.search(r'\[.*?\]', response, re.DOTALL)
-                if match:
-                    clean_response = match.group(0)
-                elif "```json" in response:
-                    clean_response = response.split("```json")[1].split("```")[0].strip()
-                elif "```" in response:
-                    clean_response = response.split("```")[1].strip()
-                else:
-                    start_idx = response.find("[")
-                    end_idx = response.rfind("]")
-                    if start_idx != -1 and end_idx != -1:
-                        clean_response = response[start_idx:end_idx + 1].strip()
-
-                evaluations = json.loads(clean_response)
+                evaluations = self._extract_json_from_response(response)
+                approved_jobs = []
                 for eval_obj in evaluations:
-                    if eval_obj.get("is_autonomous"):
-                        idx = eval_obj.get("index")
-                        if idx is not None and 0 <= idx < len(candidates):
-                            approved_jobs.append(candidates[idx])
-                            self.logger.info("LLM Approved: %s", candidates[idx].get('title'))
+                    idx = eval_obj.get("index")
+                    is_ok = eval_obj.get("ok", eval_obj.get("is_autonomous",
+                            eval_obj.get("autonomous", True)))
+                    if is_ok and idx is not None and 0 <= int(idx) < len(jobs_list):
+                        approved_jobs.append(jobs_list[int(idx)])
+                        self.logger.info("[LLMFilter] Disetujui: %s", jobs_list[int(idx)].get('title'))
+
+                if approved_jobs:
+                    return approved_jobs
+
+                self.logger.warning("[LLMFilter] LLM tidak menyetujui satu job pun — cek respons.")
+
             except Exception as e:
                 self.logger.error(
-                    "Failed to parse LLM filter response: %s. Raw: %s", e, response[:200]
+                    "[LLMFilter] Gagal parse JSON (fallback ke keyword filter): %s | Raw: %s",
+                    e, response[:300]
                 )
+        else:
+            self.logger.warning("[LLMFilter] LLM tidak menghasilkan respons.")
 
-        return approved_jobs
+        # ── LANGKAH 4: FALLBACK — keyword filter ─────────────────────────────
+        # Jika LLM gagal total, gunakan heuristik keyword.
+        # Jauh lebih baik melamar job yang belum tentu cocok
+        # daripada tidak melamar satupun selama berjam-jam.
+        self.logger.warning("[LLMFilter] Menggunakan keyword fallback untuk menghindari stuck.")
+        return self._keyword_filter(jobs_list)
 
     def submit_proposal(self, job_data: dict, branding_context: dict = None, script_path: str = None) -> bool:
         self.logger.info("Submitting proposal for: %s", job_data.get('title'))
