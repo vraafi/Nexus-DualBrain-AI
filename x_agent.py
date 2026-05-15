@@ -328,14 +328,23 @@ class XAgent:
                 return 0
 
             replied_count = 0
-            for i, tweet in enumerate(tweets[:15]):  # Tambah limit ke 15 karena banyak yang di-skip
+            for i, tweet in enumerate(tweets[:15]):
                 try:
-                    # 1. Scroll tweet ke view agar elemen-elemen di dalamnya ke-render
-                    tweet.scroll_into_view_if_needed()
-                    time.sleep(1)
+                    # 1. Scroll via JS — tidak timeout seperti scroll_into_view_if_needed
+                    try:
+                        handle = tweet.element_handle(timeout=3000)
+                        if handle:
+                            page.evaluate("el => el.scrollIntoView({block:'center',behavior:'smooth'})", handle)
+                    except Exception:
+                        page.mouse.wheel(0, 400)  # fallback: scroll manual
+                    time.sleep(1.5)
 
-                    # 2. CEK TOMBOL REPLY DULU SEBELUM MANGGIL LLM!
-                    # Jangan buang kuota/waktu LLM kalau tombol reply aja gak ada
+                    # 2. Verifikasi tweet masih valid
+                    if not self._safe_is_visible(tweet, timeout=2000):
+                        self.logger.debug("Tweet #%d: tidak terlihat setelah scroll, dilewati.", i + 1)
+                        continue
+
+                    # 3. CEK TOMBOL REPLY DULU SEBELUM MANGGIL LLM!
                     reply_btn = tweet.locator("button[data-testid='reply']").first
                     if not self._safe_is_visible(reply_btn, timeout=2000):
                         self.logger.debug("Tweet #%d: dilewati (tombol reply tidak terlihat/disabled).", i + 1)
@@ -395,14 +404,31 @@ class XAgent:
 
                     # 7. Klik tombol reply
                     self.browser.human_click(reply_btn)
-                    
-                    # Tunggu dialog reply muncul (max 10 detik)
-                    input_box = page.locator("div[data-testid='tweetTextarea_0'], div[role='textbox'][aria-label='Post text']").first
-                    try:
-                        input_box.wait_for(state="visible", timeout=10000)
-                    except:
-                        self.logger.warning("Tweet #%d: textarea tidak muncul dalam 10 detik.", i + 1)
+                    page.wait_for_timeout(1500)
+
+                    # Tunggu dialog reply — coba beberapa selector (X sering ganti class)
+                    REPLY_SELECTORS = [
+                        "div[data-testid='tweetTextarea_0']",
+                        "div[role='textbox'][aria-label*='reply' i]",
+                        "div[role='textbox'][aria-label*='Post' i]",
+                        "div[data-testid='tweetTextarea_0RichTextInputContainer']",
+                        "div[contenteditable='true'][data-testid*='Textarea']",
+                        "div[contenteditable='true'][role='textbox']",
+                    ]
+                    input_box = None
+                    for sel in REPLY_SELECTORS:
+                        try:
+                            candidate = page.locator(sel).first
+                            candidate.wait_for(state="visible", timeout=4000)
+                            input_box = candidate
+                            break
+                        except Exception:
+                            continue
+
+                    if input_box is None:
+                        self.logger.warning("Tweet #%d: textarea tidak ditemukan setelah coba semua selector.", i + 1)
                         page.keyboard.press("Escape")
+                        page.wait_for_timeout(1000)
                         continue
 
                     self.browser.human_type(input_box, reply_text)
