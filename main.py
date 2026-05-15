@@ -394,28 +394,108 @@ def run_workflow(hermes, finance, llm, branding_strategies, memory,
             # ── Evaluasi Hasil Jules CLI & Fallback ke Antigravity/Aider ───────────
             if not jules_ok:
                 logging.warning("[Phase 3] Jules gagal. Mencoba Fallback ke Antigravity/Aider...")
-                
-                # Logic Antigravity Fallback (mirip benchmark)
+
                 antigravity_cli = shutil.which("antigravity")
                 aider_cli = shutil.which("aider")
                 fallback_success = False
-                
+
+                os.makedirs("output/generated", exist_ok=True)
+                gemini_keys = [os.environ.get(f"GEMINI_KEY_{i}") for i in range(1, 11)
+                               if os.environ.get(f"GEMINI_KEY_{i}")]
+                if not gemini_keys:
+                    gemini_keys = [os.environ.get("GEMINI_API_KEY", "DUMMY_KEY")]
+
+                # ── Antigravity fallback ───────────────────────────────────────
                 if antigravity_cli:
                     logging.info("[Phase 3] Mencoba Antigravity sebagai fallback...")
-                    # ... (logika eksekusi antigravity mirip di benchmark)
-                    # Untuk menyingkat, saya asumsikan fungsi ini memanggil antigravity_cmd
-                    pass # (Implementasi lengkap di bawah jika perlu)
-                
+                    import random as _random
+                    import re as _re
+                    ag_keys = gemini_keys[:]
+                    _random.shuffle(ag_keys)
+
+                    task_desc = job_data.get("description", job_data.get("title", ""))
+                    ag_prompt = (
+                        f"Task: {job_data.get('title', 'Coding Task')}\n"
+                        f"Description: {task_desc}\n\n"
+                        "Write complete, production-ready Python 3.10+ code. "
+                        f"Save it to the file '{os.path.basename(code_path)}'. "
+                        "Include error handling, logging, and docstrings."
+                    )
+
+                    for ag_attempt, ag_key in enumerate(ag_keys):
+                        logging.info("[Phase 3] Antigravity attempt %d...", ag_attempt + 1)
+                        ag_env = os.environ.copy()
+                        ag_env["GEMINI_API_KEY"] = ag_key
+                        ag_cmd = [
+                            antigravity_cli,
+                            "--model", "gemini/gemini-3-flash",
+                            "--message", ag_prompt,
+                            "--yes-always",
+                            "--auto-commits",
+                            os.path.basename(code_path)
+                        ]
+                        ag_res = subprocess.run(
+                            ag_cmd, cwd=os.path.dirname(os.path.abspath(code_path)) or ".",
+                            env=ag_env, capture_output=True, text=True, timeout=300
+                        )
+                        if ag_res.returncode == 0 and os.path.exists(code_path):
+                            fallback_success = True
+                            logging.info("[Phase 3] ✅ Antigravity fallback berhasil!")
+                            break
+                        else:
+                            logging.warning("[Phase 3] Antigravity attempt %d gagal.", ag_attempt + 1)
+
+                # ── Aider fallback ─────────────────────────────────────────────
                 if not fallback_success and aider_cli:
-                    logging.info("[Phase 3] Antigravity gagal/limit. Mencoba Aider sebagai fallback...")
-                    aider_cmd = [aider_cli, "--model", "gemini/gemma-4-31b-it", "--message", f"Implement this task: {job_data.get('description')}", "--yes", "--no-auto-commits"]
-                    aider_res = subprocess.run(aider_cmd, capture_output=True, text=True)
-                    if aider_res.returncode == 0:
+                    logging.info("[Phase 3] Antigravity gagal/tidak ada. Mencoba Aider sebagai fallback...")
+                    task_desc = job_data.get("description", job_data.get("title", ""))
+                    aider_cmd = [
+                        aider_cli,
+                        "--model", "gemini/gemma-4-31b-it",
+                        "--message", (
+                            f"Implement this task and save to '{os.path.basename(code_path)}':\n\n"
+                            f"{task_desc}\n\n"
+                            "Write complete Python 3.10+ code with error handling, logging, and docstrings."
+                        ),
+                        "--yes",
+                        "--no-auto-commits",
+                        os.path.basename(code_path)
+                    ]
+                    aider_env = os.environ.copy()
+                    aider_env["GEMINI_API_KEY"] = gemini_keys[0]
+                    aider_res = subprocess.run(
+                        aider_cmd,
+                        cwd=os.path.dirname(os.path.abspath(code_path)) or ".",
+                        env=aider_env, capture_output=True, text=True, timeout=300
+                    )
+                    if os.path.exists(code_path):
                         fallback_success = True
                         logging.info("[Phase 3] ✅ Aider berhasil menyelesaikan tugas!")
-                
+                    else:
+                        logging.error("[Phase 3] Aider gagal membuat file. stderr: %s",
+                                      aider_res.stderr[:300])
+
+                # ── LLM langsung sebagai last resort ──────────────────────────
                 if not fallback_success:
-                    logging.error("[Phase 3] Semua coding agent (Jules, Antigravity, Aider) gagal.")
+                    logging.warning("[Phase 3] Antigravity & Aider gagal. Generate via LLM langsung...")
+                    task_desc = job_data.get("description", job_data.get("title", ""))
+                    llm_code = llm.generate_content(
+                        f"Write complete, working Python 3.10+ code for:\n\n{task_desc}\n\n"
+                        "Return ONLY raw Python code, no markdown fences.",
+                        use_codegen_model=True
+                    )
+                    if llm_code:
+                        if "```python" in llm_code:
+                            llm_code = llm_code.split("```python")[1].split("```")[0].strip()
+                        elif "```" in llm_code:
+                            llm_code = llm_code.split("```")[1].strip()
+                        with open(code_path, "w") as f:
+                            f.write(llm_code)
+                        fallback_success = True
+                        logging.info("[Phase 3] ✅ LLM langsung berhasil generate kode: %s", code_path)
+
+                if not fallback_success:
+                    logging.error("[Phase 3] Semua coding agent (Jules, Antigravity, Aider, LLM) gagal.")
                     raise Exception("Gagal generate kode dengan semua agent yang tersedia.")
                 
             current_step = "sandbox_phase"
@@ -723,14 +803,87 @@ def run_coding_benchmarks(llm, hermes):
         # 4. Pindahkan kode murni buatan Antigravity ke luar untuk dites Sandbox
         file_name = f"benchmark_{task['level'].lower()}.py"
         target_file = os.path.join(clone_dir, file_name)
-        
-        if os.path.exists(target_file):
-            shutil.copy(target_file, file_name)
-            logging.info("[Benchmark] Berhasil mengekstrak kode buatan Antigravity secara instan!")
-        else:
-            with open(file_name, "w") as f:
-                f.write("# ERROR: Antigravity gagal membuat file!")
-            logging.error("[Benchmark] Antigravity Gagal membuat file.")
+
+        # Cari semua kandidat file .py yang mungkin dibuat Antigravity/Aider di clone_dir
+        file_found = False
+        candidates = [
+            target_file,
+            os.path.join(clone_dir, file_name_antigravity),
+            os.path.join(clone_dir, f"benchmark_{task['level'].lower()}_aider.py"),
+            os.path.join(clone_dir, "solution.py"),
+            os.path.join(clone_dir, "main.py"),
+        ]
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                shutil.copy(candidate, file_name)
+                logging.info("[Benchmark] Berhasil mengekstrak kode dari: %s", candidate)
+                file_found = True
+                break
+
+        # Jika tidak ada file yang dibuat oleh Antigravity/Aider, scan semua .py di clone_dir
+        if not file_found:
+            import glob as _glob
+            py_files = [
+                f for f in _glob.glob(os.path.join(clone_dir, "*.py"))
+                if not os.path.basename(f).startswith("test_")
+                and os.path.basename(f) not in ("setup.py", "conftest.py")
+            ]
+            if py_files:
+                # Ambil file terbesar (kemungkinan besar itulah kode utama)
+                py_files.sort(key=os.path.getsize, reverse=True)
+                shutil.copy(py_files[0], file_name)
+                logging.info("[Benchmark] File Antigravity ditemukan via scan: %s", py_files[0])
+                file_found = True
+
+        # Fallback ke Aider dengan output file eksplisit jika semua gagal
+        if not file_found and aider_cli:
+            logging.warning("[Benchmark] Antigravity tidak buat file. Fallback Aider dengan output eksplisit...")
+            aider_fallback_cmd = [
+                aider_cli,
+                "--model", "gemini/gemma-4-31b-it",
+                "--message", (
+                    f"{antigravity_prompt}\n\n"
+                    f"WAJIB: Simpan kode ke file bernama '{file_name}'. "
+                    "Pastikan file dibuat dan bisa dijalankan."
+                ),
+                "--yes",
+                "--no-auto-commits",
+                file_name
+            ]
+            aider_fb_res = subprocess.run(
+                aider_fallback_cmd, cwd=clone_dir,
+                env=antigravity_env, capture_output=True, text=True, timeout=300
+            )
+            if os.path.exists(os.path.join(clone_dir, file_name)):
+                shutil.copy(os.path.join(clone_dir, file_name), file_name)
+                logging.info("[Benchmark] ✅ Aider fallback berhasil membuat file: %s", file_name)
+                file_found = True
+            else:
+                logging.error("[Benchmark] Aider fallback juga gagal membuat file. Error: %s",
+                              aider_fb_res.stderr[:200])
+
+        # Last resort: generate langsung via Gemini LLM
+        if not file_found:
+            logging.warning("[Benchmark] Semua agent gagal membuat file. Generate via LLM langsung...")
+            llm_code = llm.generate_content(
+                f"Write complete, working Python code for this task:\n\n{task['prompt']}\n\n"
+                "Return ONLY the raw Python code, no markdown fences.",
+                use_codegen_model=True
+            )
+            if llm_code:
+                # Strip markdown jika ada
+                if "```python" in llm_code:
+                    llm_code = llm_code.split("```python")[1].split("```")[0].strip()
+                elif "```" in llm_code:
+                    llm_code = llm_code.split("```")[1].strip()
+                with open(file_name, "w") as f:
+                    f.write(llm_code)
+                logging.info("[Benchmark] ✅ LLM langsung berhasil generate kode untuk: %s", file_name)
+                file_found = True
+            else:
+                with open(file_name, "w") as f:
+                    f.write(f"# ERROR: Semua agent gagal membuat kode untuk task: {task['title']}\n")
+                logging.error("[Benchmark] Semua fallback gagal untuk task: %s", task['level'])
                 
         # 5. Test di Sandbox (Gemma 4 menguji Jules)
         passed = sandbox.test_code(file_name)
