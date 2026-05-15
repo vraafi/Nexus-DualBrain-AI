@@ -86,30 +86,46 @@ def _get_shared_browser(proxy=None) -> Browser:
     """
     Mengembalikan singleton Browser yang dibuat sekali dan dipakai ulang.
     Thread-safe: menggunakan _SHARED_BROWSER_LOCK untuk init.
-    keep_alive=True agar browser tidak ditutup antar task.
 
-    Jika BRAVE_PATH (atau BROWSER_EXECUTABLE) di-set di env, Brave digunakan
-    sebagai browser. Jika tidak, fallback ke Chromium bawaan Playwright.
+    Prioritas koneksi browser:
+      1. BRAVE_CDP_URL — connect ke Brave yang sudah berjalan via CDP (PALING DIREKOMENDASIKAN)
+                         Brave harus dijalankan dengan flag:
+                         brave --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0
+      2. BRAVE_PATH    — launch Brave baru (jika tidak ada CDP URL)
+      3. Playwright Chromium — fallback terakhir
+
+    Referensi: https://github.com/browser-use/browser-use/issues/4709
     """
     global _SHARED_BROWSER
     with _SHARED_BROWSER_LOCK:
         if _SHARED_BROWSER is None:
-            proxy_config = {"server": proxy} if proxy else None
-            brave_path = _resolve_brave_path()
+            cdp_url = os.environ.get("BRAVE_CDP_URL", "").strip()
 
-            if brave_path:
-                logger.info("[BrowserAgent] Menggunakan Brave: %s", brave_path)
+            if cdp_url:
+                # MODE 1: Connect ke Brave yang sudah berjalan via CDP
+                # Brave harus distart dengan: brave --remote-debugging-port=9222
+                logger.info("[BrowserAgent] Connect ke Brave via CDP: %s", cdp_url)
+                profile = BrowserProfile(
+                    keep_alive=True,
+                    cdp_url=cdp_url,
+                )
             else:
-                logger.info("[BrowserAgent] BRAVE_PATH tidak ditemukan, pakai Chromium bawaan Playwright.")
+                # MODE 2: Launch browser baru (Brave atau Playwright Chromium)
+                proxy_config = {"server": proxy} if proxy else None
+                brave_path = _resolve_brave_path()
+                if brave_path:
+                    logger.info("[BrowserAgent] Launch Brave baru: %s", brave_path)
+                else:
+                    logger.info("[BrowserAgent] Pakai Playwright Chromium (Brave tidak ditemukan).")
+                profile = BrowserProfile(
+                    headless=False,
+                    proxy=proxy_config,
+                    keep_alive=True,
+                    executable_path=brave_path,
+                )
 
-            profile = BrowserProfile(
-                headless=False,
-                proxy=proxy_config,
-                keep_alive=True,
-                executable_path=brave_path,  # None = Playwright Chromium default
-            )
             _SHARED_BROWSER = Browser(browser_profile=profile)
-            logger.info("[BrowserAgent] Singleton browser dibuat (keep_alive=True).")
+            logger.info("[BrowserAgent] Singleton browser siap (keep_alive=True).")
         return _SHARED_BROWSER
 
 
