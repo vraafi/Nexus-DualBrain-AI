@@ -44,6 +44,7 @@ from hermes_agent import HermesAgent
 from skill_library import SkillLibrary
 from job_scorer import JobScorer
 from self_improver import SelfImprover
+from payment_verifier import PaymentVerifier
 
 load_dotenv()
 
@@ -1010,6 +1011,13 @@ if __name__ == "__main__":
     # ── BENCHMARK KALIBRASI (sekali saat startup) ───────────────────────────
     run_coding_benchmarks(llm, hermes)
 
+    # ── PAYMENT VERIFICATION SCHEDULE ─────────────────────────────────────
+    # Verifikasi pembayaran dijalankan sekali per 24 jam.
+    # Ini yang update status "DELIVERED" -> "PAID" di FinancialTracker.
+    # Reference: https://support.upwork.com/hc/en-us/articles/211062608
+    _last_payment_check = 0
+    PAYMENT_CHECK_INTERVAL = 86400  # 24 jam
+
     # ── MAIN LOOP ────────────────────────────────────────────────────
     try:
         while True:
@@ -1020,11 +1028,35 @@ if __name__ == "__main__":
                     job_scorer=job_scorer,
                     self_improver=self_improver
                 )
-                logging.info("⏳ Cooldown %d detik...", sleep_time)
+                logging.info("Cooldown %d detik...", sleep_time)
+
+                # Jalankan payment verification setiap 24 jam
+                if time.time() - _last_payment_check > PAYMENT_CHECK_INTERVAL:
+                    try:
+                        logging.info("[PaymentVerifier] Memulai verifikasi pembayaran harian...")
+                        current_proxy = get_next_proxy(RESIDENTIAL_PROXIES)
+                        with BrowserAgent(headless=False, proxy=current_proxy,
+                                          endpoint_url="http://localhost:9222",
+                                          llm_client=llm) as pay_browser:
+                            verifier = PaymentVerifier(pay_browser, llm, finance)
+                            results = verifier.run_full_verification()
+
+                        if results["total_new_payments"] > 0:
+                            summary = finance.get_summary()
+                            hermes.send_message(
+                                f"💰 Verifikasi Pembayaran Selesai!\n"
+                                f"Pembayaran baru: {results['total_new_payments']}\n"
+                                f"Total revenue: ${summary.get('total_revenue', 0):.2f}\n"
+                                f"Pending: ${summary.get('pending_revenue', 0):.2f}"
+                            )
+                        _last_payment_check = time.time()
+                    except Exception as pay_err:
+                        logging.error("[PaymentVerifier] Error: %s", pay_err)
+
                 time.sleep(sleep_time)
             except Exception as exc:
-                logging.error("💥 Critical workflow error: %s", exc)
-                hermes.send_message(f"💥 Critical error: {exc}")
+                logging.error("Critical workflow error: %s", exc)
+                hermes.send_message(f"Critical error: {exc}")
                 time.sleep(60)
     finally:
         hermes.stop_command_listener()
