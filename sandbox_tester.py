@@ -9,23 +9,12 @@ class SandboxTester:
     def __init__(self, duration_minutes=15, llm_client=None):
         self.duration = duration_minutes * 60
         self.llm = llm_client
-        self.venv_dir = "sandbox_env"
-        self._setup_venv()
-
-    def _setup_venv(self):
-        if not os.path.exists(self.venv_dir):
-            logging.info("Setting up lightweight virtual environment for sandbox testing...")
-            subprocess.run(["python3", "-m", "venv", self.venv_dir], check=True)
-            # Pre-install common scraping tools and testing tools
-            pip_path = os.path.join(self.venv_dir, "bin", "pip")
-            subprocess.run([pip_path, "install", "requests", "beautifulsoup4", "playwright", "flake8", "pytest"], check=True)
 
     def _static_analysis(self, code_path):
         """Runs flake8 to catch syntax errors before executing."""
         logging.info("Running static analysis via flake8...")
-        flake8_exe = os.path.join(self.venv_dir, "bin", "flake8")
         try:
-            result = subprocess.run([flake8_exe, code_path], capture_output=True, text=True)
+            result = subprocess.run(["flake8", code_path], capture_output=True, text=True)
             if result.returncode != 0:
                  logging.warning(f"Static analysis found potential issues:\n{result.stdout}")
                  return False, result.stdout
@@ -66,7 +55,6 @@ class SandboxTester:
                  # This prevents LLM prompt injection RCEs from accessing the host OS
                  # while remaining light enough for 8GB RAM systems (unlike Docker).
 
-                 python_exe = os.path.join(os.path.abspath(self.venv_dir), "bin", "python")
                  abs_code_path = os.path.abspath(code_path)
 
                  # Step 1: Static Analysis
@@ -76,24 +64,24 @@ class SandboxTester:
 
                  # Step 2: Test Execution inside llm-sandbox
                  from llm_sandbox import SandboxSession
-                 with SandboxSession(lang="python", keep_template=True) as session:
-                     remote_path = f"/workspace/{os.path.basename(code_path)}"
-                     session.copy(abs_code_path, remote_path)
 
-                     # Ensure we have testing packages inside
-                     session.execute("pip install pytest requests beautifulsoup4 flake8")
+                 with SandboxSession(lang="python", verbose=False) as session:
+                     with open(abs_code_path, "r") as f:
+                         code_to_run = f.read()
 
-                     # Run tests
-                     result = session.execute(f"pytest {remote_path} -v")
+                     result = session.run(
+                         code=code_to_run,
+                         libraries=["requests", "beautifulsoup4", "pytest"]
+                     )
 
-                     if result.is_success:
-                         logging.info("Sandbox testing passed successfully.")
-                         return True
-                     elif "no tests ran" in result.text:
-                         logging.info("Sandbox testing passed successfully. (No unit tests found, but script executed cleanly).")
-                         return True
-                     else:
-                         raise Exception(f"Execution Failed: {result.text}")
+                     if result.stderr and result.stderr.strip():
+                         raise Exception(f"Execution Failed:\n{result.stderr}")
+
+                     logging.info(
+                         "Sandbox testing passed successfully. Output: %s",
+                         (result.stdout or "")[:200]
+                     )
+                     return True
 
 
              except Exception as e:
