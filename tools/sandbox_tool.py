@@ -63,59 +63,26 @@ def search_error(error_msg):
         return ""
 
 
+from llm_sandbox import SandboxSession
+
 def run_in_bwrap(python_exe, code_path, timeout_seconds=900):
     """Eksekusi kode di bwrap sandbox yang terisolasi."""
-    run_dir = f"/tmp/sandbox_{uuid.uuid4().hex[:8]}"
-    os.makedirs(run_dir, exist_ok=True)
-    code_copy = os.path.join(run_dir, "script.py")
-    shutil.copy2(code_path, code_copy)
-
-    bwrap_cmd = [
-        "bwrap",
-        "--ro-bind", "/usr", "/usr",
-        "--ro-bind", "/lib", "/lib",
-        "--ro-bind", "/lib64", "/lib64",
-        "--ro-bind", "/bin", "/bin",
-        "--ro-bind", os.path.abspath(SANDBOX_ENV), "/sandbox_env",
-        "--bind", run_dir, "/workspace",
-        "--tmpfs", "/tmp",
-        "--proc", "/proc",
-        "--dev", "/dev",
-        "--unshare-net",        # No network access
-        "--unshare-pid",
-        "--die-with-parent",
-        "--setenv", "HOME", "/workspace",
-        "--setenv", "PATH", f"/sandbox_env/bin:/bin:/usr/bin",
-        "--chdir", "/workspace",
-        "/sandbox_env/bin/python", "script.py"
-    ]
-
     try:
-        result = subprocess.run(
-            bwrap_cmd,
-            capture_output=True, text=True,
-            timeout=timeout_seconds
-        )
-        return result.returncode == 0, result.stdout, result.stderr
-    except subprocess.TimeoutExpired:
-        return False, "", "TIMEOUT: Eksekusi melebihi batas waktu."
-    except FileNotFoundError:
-        # bwrap tidak tersedia, fallback ke subprocess biasa dengan timeout
-        logging.warning("bwrap tidak tersedia, fallback ke subprocess (less secure)")
-        try:
-            result = subprocess.run(
-                [python_exe, code_path],
-                capture_output=True, text=True,
-                timeout=timeout_seconds,
-                env={"HOME": "/tmp", "PATH": f"{os.path.dirname(python_exe)}:/usr/bin:/bin"}
-            )
-            return result.returncode == 0, result.stdout, result.stderr
-        except subprocess.TimeoutExpired:
-            return False, "", "TIMEOUT"
+        with SandboxSession(lang="python", keep_template=True) as session:
+            remote_path = f"/workspace/script.py"
+            session.copy(code_path, remote_path)
+
+            result = session.execute(f"python {remote_path}")
+
+            if result.is_success:
+                return True, result.text, ""
+            else:
+                return False, "", result.text
+
     except Exception as e:
+        if 'Timeout' in str(type(e)):
+            return False, "", "TIMEOUT: Eksekusi melebihi batas waktu."
         return False, "", str(e)
-    finally:
-        shutil.rmtree(run_dir, ignore_errors=True)
 
 
 def fix_code(llm, code, error_output, search_context=""):

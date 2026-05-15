@@ -69,129 +69,32 @@ class SandboxTester:
                  python_exe = os.path.join(os.path.abspath(self.venv_dir), "bin", "python")
                  abs_code_path = os.path.abspath(code_path)
 
-                 # CREATE ISOLATED SANDBOX DIRECTORY
-                 # Never bind the project root. Create a dedicated temp folder for execution.
-                 import shutil
-                 sandbox_tmp_dir = os.path.abspath("./client_sandbox")
-                 if not os.path.exists(sandbox_tmp_dir):
-                     os.makedirs(sandbox_tmp_dir)
-
-                 # Create a unique temporary directory for each test run
-                 run_id = str(uuid.uuid4())
-                 sandbox_run_dir = os.path.join(sandbox_tmp_dir, run_id)
-                 os.makedirs(sandbox_run_dir)
-
-                 isolated_script_path = os.path.join(sandbox_run_dir, os.path.basename(code_path))
-                 shutil.copy2(abs_code_path, isolated_script_path)
-
-                 # Also copy requirements.txt if it exists, for isolated venv setup
-                 if os.path.exists(os.path.join(os.path.dirname(abs_code_path), "requirements.txt")):
-                     shutil.copy2(os.path.join(os.path.dirname(abs_code_path), "requirements.txt"), sandbox_run_dir)
-
-                 # Use the global persistent venv to save RAM and execution time
-                 run_venv_dir = os.path.abspath(self.venv_dir)
-                 pip_path = os.path.join(run_venv_dir, "bin", "pip")
-                 
-                 # Install project-specific requirements if present (directly into the persistent venv)
-                 if os.path.exists(os.path.join(sandbox_run_dir, "requirements.txt")):
-                     subprocess.run([pip_path, "install", "-r", os.path.join(sandbox_run_dir, "requirements.txt")], check=True)
-
-                 # Update python_exe and pytest_exe to point to the persistent venv
-                 python_exe = os.path.join(run_venv_dir, "bin", "python")
-                 pytest_exe = os.path.join(run_venv_dir, "bin", "pytest")
-
-                 # Update bwrap_cmd to bind the new sandbox_run_dir
-                 bwrap_cmd = [
-                     "bwrap",
-                     "--unshare-user",
-                     "--unshare-ipc",
-                     "--unshare-pid",
-                     "--unshare-uts",
-                     "--unshare-cgroup-try",
-                     "--die-with-parent",
-                     "--ro-bind", "/usr", "/usr",
-                     "--ro-bind", "/lib", "/lib",
-                     "--ro-bind", "/lib64", "/lib64",
-                     "--ro-bind", "/bin", "/bin",
-                     "--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf",
-                     "--ro-bind", "/etc/ssl", "/etc/ssl",
-                     "--ro-bind", run_venv_dir, run_venv_dir,
-                     "--bind", sandbox_run_dir, sandbox_run_dir, # Bind the unique run directory
-                     "--tmpfs", "/tmp",
-                     "--tmpfs", "/dev/shm",
-                     "--dev-bind", "/dev", "/dev",
-                     "--proc", "/proc",
-                     "--setenv", "PATH", "/usr/bin:/bin",
-                     "--chdir", sandbox_run_dir,
-                     pytest_exe, isolated_script_path, "-v"
-                 ]
-
                  # Step 1: Static Analysis
-                 is_valid, static_errors = self._static_analysis(isolated_script_path)
+                 is_valid, static_errors = self._static_analysis(abs_code_path)
                  if not is_valid and "SyntaxError" in static_errors:
                       raise Exception(f"Static Analysis Failed:\n{static_errors}")
 
-                 # Step 2: Test Execution inside bwrap
-                 # If unit tests are included in the generated script, we can run pytest on it
-                 # If not, we just run the script with python. The prompt now asks for unittest block.
+                 # Step 2: Test Execution inside llm-sandbox
+                 from llm_sandbox import SandboxSession
+                 with SandboxSession(lang="python", keep_template=True) as session:
+                     remote_path = f"/workspace/{os.path.basename(code_path)}"
+                     session.copy(abs_code_path, remote_path)
 
-                 # We will default to running pytest on the file, which will also execute the code
-                 # if it's structured properly, or we can just run python.
-                 # To ensure both script logic and unit tests are hit, we run pytest on the script.
-                 pytest_exe = os.path.join(os.path.abspath(self.venv_dir), "bin", "pytest")
+                     # Ensure we have testing packages inside
+                     session.execute("pip install pytest requests beautifulsoup4 flake8")
 
-                 # Use tmpfs for standard temporary directories to avoid host interference
-                 # Fully unshare user, network (if testing doesn't need it, though scraping might),
-                 # IPC, and PID namespaces.
-                 bwrap_cmd = [
-                     "bwrap",
-                     "--unshare-user",
-                     "--unshare-ipc",
-                     "--unshare-pid",
-                     "--unshare-uts",
-                     "--unshare-cgroup-try",
-                     "--die-with-parent",
-                     "--ro-bind", "/usr", "/usr",
-                     "--ro-bind", "/lib", "/lib",
-                     "--ro-bind", "/lib64", "/lib64",
-                     "--ro-bind", "/bin", "/bin",
-                     "--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf",
-                     "--ro-bind", "/etc/ssl", "/etc/ssl",
-                     "--ro-bind", os.path.abspath(self.venv_dir), os.path.abspath(self.venv_dir),
-                     "--bind", sandbox_tmp_dir, sandbox_tmp_dir, # Only bind the empty isolated folder
-                     "--tmpfs", "/tmp",
-                     "--tmpfs", "/dev/shm",
-                     "--dev-bind", "/dev", "/dev", # Changed from --dev to --dev-bind to prevent 'bwrap: Can't mount devtmpfs on /newroot/dev: Operation not permitted' errors in nested environments
-                     "--proc", "/proc", # Crucial for python process management
-                     "--setenv", "PATH", "/usr/bin:/bin",
-                     "--chdir", sandbox_tmp_dir,
-                     pytest_exe, isolated_script_path, "-v" # Run tests and the script
-                 ]
+                     # Run tests
+                     result = session.execute(f"pytest {remote_path} -v")
 
-                 try:
-                     process = subprocess.run(
-                         bwrap_cmd,
-                         capture_output=True,
-                         text=True,
-                         timeout=test_duration
-                     )
-                 finally:
-                     # Clean up isolated script to prevent state leakage
-                     if os.path.exists(isolated_script_path):
-                         os.remove(isolated_script_path)
+                     if result.is_success:
+                         logging.info("Sandbox testing passed successfully.")
+                         return True
+                     elif "no tests ran" in result.text:
+                         logging.info("Sandbox testing passed successfully. (No unit tests found, but script executed cleanly).")
+                         return True
+                     else:
+                         raise Exception(f"Execution Failed: {result.text}")
 
-                 if process.returncode == 0:
-                     logging.info("Sandbox testing passed successfully.")
-                     return True
-                 elif process.returncode == 5:
-                     logging.info("Sandbox testing passed successfully. (Exit Code 5: No unit tests found, but script executed cleanly).")
-                     return True
-                 else:
-                     raise Exception(f"Process exited with code {process.returncode}: {process.stderr}")
-
-             except subprocess.TimeoutExpired:
-                 logging.info("Process ran for the full duration without crashing. Considered successful.")
-                 return True
 
              except Exception as e:
                  error_msg = str(e)
