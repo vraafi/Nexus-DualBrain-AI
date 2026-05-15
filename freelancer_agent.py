@@ -28,87 +28,42 @@ class FreelancerAgent:
             logger.error("[Freelancer] Tidak ada credential Freelancer di vault.")
             return False
 
-        try:
-            self.browser.navigate("https://www.freelancer.com/login")
-            page = self.browser.page
-            page.wait_for_timeout(3000)
-
-            email_input = page.locator("input[type='email'], input[name='email']").first
-            self.browser.human_type(email_input, creds["username"])
-
-            password_input = page.locator("input[type='password'], input[name='password']").first
-            self.browser.human_type(password_input, creds["password"])
-
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(6000)
-
-            if "login" in page.url or "sign_in" in page.url:
-                logger.warning("[Freelancer] Login gagal atau perlu manual intervention.")
-                page.wait_for_timeout(20000)  # Freelancer kadang butuh waktu lebih
-                if "login" in page.url or "sign_in" in page.url:
-                    return False
-
-            logger.info("[Freelancer] Login berhasil.")
-            return True
-
-        except Exception as exc:
-            logger.error("[Freelancer] Login error: %s", exc)
+        result = self.browser.execute_task(
+            f"Login ke Freelancer di https://www.freelancer.com/login. "
+            f"Email: {creds['username']}. Password: {creds['password']}. "
+            f"Setelah login, pastikan berhasil masuk ke dashboard.",
+            max_steps=12
+        )
+        if "FAILED" in result:
+            logger.error("[Freelancer] Login error.")
             return False
+
+        logger.info("[Freelancer] Login berhasil.")
+        return True
 
     def check_job_matches(self) -> list[dict]:
         """
         Cek Job Matches yang dikirimkan Freelancer ke freelancer.
-        Freelancer menyajikan job yang cocok dengan skill profile kita.
         Return list of dict: {job_id, title, description, rate, duration, url}
         """
-        jobs = []
+        result = self.browser.execute_task(
+            "Buka https://www.freelancer.com/jobs. "
+            "Scrape 5 job pertama. "
+            "Return JSON: [{job_id, title, description, rate, url}, ...]",
+            max_steps=15
+        )
         try:
-            self.browser.navigate("https://www.freelancer.com/jobs")
-            page = self.browser.page
-            page.wait_for_timeout(5000)
-
-            job_cards = page.locator(
-                "div[class*='JobSearchCard'], div[class*='job-card'], article[class*='job']"
-            ).all()
-
-            for card in job_cards[:5]:
-                try:
-                    title_elem = card.locator("a[class*='JobSearchCard-primary-heading-link']").first
-                    if not title_elem.is_visible():
-                        title_elem = card.locator("h2, h3, span[class*='title']").first
-                    
-                    title = title_elem.inner_text() if title_elem.is_visible() else "Untitled"
-
-                    desc_elem = card.locator("p[class*='JobSearchCard-primary-description']").first
-                    if not desc_elem.is_visible():
-                        desc_elem = card.locator("p[class*='description'], div[class*='description']").first
-                    description = desc_elem.inner_text() if desc_elem.is_visible() else ""
-
-                    rate_elem = card.locator("div[class*='JobSearchCard-primary-price']").first
-                    rate = rate_elem.inner_text() if rate_elem.is_visible() else "TBD"
-
-                    link_elem = card.locator("a").first
-                    url = link_elem.get_attribute("href") or ""
-                    if url and not url.startswith("http"):
-                        url = "https://www.freelancer.com" + url
-
-                    jobs.append({
-                        "job_id": url.split("/")[-1] if url else f"freelancer_job_{len(jobs)}",
-                        "title": title,
-                        "description": description,
-                        "rate": rate,
-                        "url": url,
-                        "platform": "freelancer"
-                    })
-                except Exception as card_err:
-                    logger.warning("[Freelancer] Gagal parse job card: %s", card_err)
-
-            logger.info("[Freelancer] Ditemukan %d job matches.", len(jobs))
-            return jobs
-
+            import re
+            match = re.search(r'\[.*?\]', result, re.DOTALL)
+            if match:
+                jobs = json.loads(match.group(0))
+                for j in jobs:
+                    j["platform"] = "freelancer"
+                logger.info("[Freelancer] Ditemukan %d job matches.", len(jobs))
+                return jobs
         except Exception as exc:
             logger.error("[Freelancer] Gagal cek job matches: %s", exc)
-            return []
+        return []
 
     def filter_autonomous_jobs(self, jobs: list[dict]) -> list[dict]:
         """
@@ -124,7 +79,7 @@ class FreelancerAgent:
             "Evaluasi daftar job berikut dan tentukan mana yang bisa dikerjakan 100% otonom:\n\n"
         )
         for i, job in enumerate(jobs):
-            prompt += f"Job {i}:\nTitle: {job['title']}\nDescription: {job['description']}\n---\n"
+            prompt += f"Job {i}:\nTitle: {job.get('title')}\nDescription: {job.get('description')}\n---\n"
 
         prompt += (
             "\nRespond ONLY with JSON array: "
@@ -135,6 +90,7 @@ class FreelancerAgent:
         approved = []
         if response:
             try:
+                import re
                 if "```json" in response:
                     response = response.split("```json")[1].split("```")[0].strip()
                 elif "```" in response:
@@ -157,65 +113,40 @@ class FreelancerAgent:
         if not job.get("url"):
             return False
 
-        try:
-            self.browser.navigate(job["url"])
-            page = self.browser.page
-            page.wait_for_timeout(4000)
+        persona = branding_strategy.get("persona", "Senior Backend Engineer")
+        code_quality = branding_strategy.get("code_quality", "SOLID principles")
 
-            apply_btn = page.get_by_role("button", name="Bid on This Project")
-            if not apply_btn.is_visible():
-                apply_btn = page.locator("button:has-text('Bid'), button:has-text('Apply')").first
+        prompt = (
+            f"Write a professional bid/proposal for this Freelancer.com project.\n"
+            f"Job Title: {job['title']}\n"
+            f"Job Description: {job['description']}\n"
+            f"My Persona: {persona}. I write code following {code_quality}.\n"
+            "Requirements: Under 200 words. Business-focused. Mention ROI, scalability, and efficiency. "
+            "Show deep technical understanding. End with availability and rate confirmation. "
+            "Do NOT use generic phrases like 'I am passionate about'. Be specific and data-driven."
+        )
 
-            if not apply_btn.is_visible():
-                logger.warning("[Freelancer] Tombol Bid tidak ditemukan untuk: %s", job["title"])
-                return False
-
-            self.browser.human_click(apply_btn)
-            page.wait_for_timeout(3000)
-
-            # Generate cover letter via LLM
-            persona = branding_strategy.get("persona", "Senior Backend Engineer")
-            code_quality = branding_strategy.get("code_quality", "SOLID principles")
-
-            prompt = (
-                f"Write a professional bid/proposal for this Freelancer.com project.\n"
-                f"Job Title: {job['title']}\n"
-                f"Job Description: {job['description']}\n"
-                f"My Persona: {persona}. I write code following {code_quality}.\n"
-                "Requirements: Under 200 words. Business-focused. Mention ROI, scalability, and efficiency. "
-                "Show deep technical understanding. End with availability and rate confirmation. "
-                "Do NOT use generic phrases like 'I am passionate about'. Be specific and data-driven."
+        cover_letter = self.llm.generate_content(prompt)
+        if not cover_letter:
+            cover_letter = (
+                f"As a senior Python engineer specializing in backend systems and API integrations, "
+                f"I am well-positioned to deliver {job['title']} with measurable efficiency gains. "
+                "Available immediately. Please let me know your timeline expectations."
             )
 
-            cover_letter = self.llm.generate_content(prompt)
-            if not cover_letter:
-                cover_letter = (
-                    f"As a senior Python engineer specializing in backend systems and API integrations, "
-                    f"I am well-positioned to deliver {job['title']} with measurable efficiency gains. "
-                    "Available immediately. Please let me know your timeline expectations."
-                )
+        result = self.browser.execute_task(
+            f"Buka project Freelancer di: {job['url']}. "
+            f"Klik tombol Bid. "
+            f"Isi cover letter/proposal dengan teks ini: {cover_letter[:400]}. "
+            f"Submit bid tersebut.",
+            max_steps=20
+        )
 
-            # Isi bid proposal
-            cover_input = page.locator(
-                "textarea[name*='proposal'], textarea[placeholder*='proposal'], "
-                "textarea[id*='proposalDescription']"
-            ).first
-            if cover_input.is_visible():
-                self.browser.human_type(cover_input, cover_letter)
-
-            # Submit
-            submit_btn = page.locator("button[type='submit']:has-text('Place Bid')").first
-            if not submit_btn.is_visible():
-                submit_btn = page.locator("button:has-text('Submit'), button[type='submit']").first
-
-            self.browser.human_click(submit_btn)
-            page.wait_for_timeout(3000)
-
+        if "FAILED" not in result:
             logger.info("[Freelancer] Applied ke: %s", job["title"])
             return True
-
-        except Exception as exc:
-            logger.error("[Freelancer] Gagal apply ke job %s: %s", job.get("title"), exc)
+        else:
+            logger.error("[Freelancer] Gagal apply ke job %s", job.get("title"))
             return False
 
     def check_active_engagements(self) -> list[dict]:
@@ -223,73 +154,45 @@ class FreelancerAgent:
         Cek engagement (kontrak aktif) yang sedang berjalan.
         Return list pesanan aktif yang perlu dikerjakan.
         """
-        engagements = []
+        result = self.browser.execute_task(
+            "Buka https://www.freelancer.com/manage. "
+            "List 3 project/kontrak yang sedang aktif berjalan. "
+            "Return JSON: [{job_id, title, url}, ...]",
+            max_steps=15
+        )
         try:
-            self.browser.navigate("https://www.freelancer.com/manage")
-            page = self.browser.page
-            page.wait_for_timeout(5000)
-
-            engagement_cards = page.locator(
-                "fl-bit[class*='ProjectCard'], div[class*='project-card']"
-            ).all()
-
-            for card in engagement_cards[:3]:
-                try:
-                    title_elem = card.locator("h2, h3, a[class*='project-title']").first
-                    title = title_elem.inner_text() if title_elem.is_visible() else "Active Project"
-
-                    link_elem = card.locator("a[href*='projects']").first
-                    url = link_elem.get_attribute("href") or ""
-                    if url and not url.startswith("http"):
-                        url = "https://www.freelancer.com" + url
-
-                    engagements.append({
-                        "job_id": url.split("/")[-1],
-                        "title": title,
-                        "description": "",
-                        "url": url,
-                        "platform": "freelancer"
-                    })
-                except Exception as ce:
-                    logger.warning("[Freelancer] Gagal parse engagement: %s", ce)
-
-            logger.info("[Freelancer] %d active project ditemukan.", len(engagements))
-            return engagements
-
+            import re
+            match = re.search(r'\[.*?\]', result, re.DOTALL)
+            if match:
+                engagements = json.loads(match.group(0))
+                for e in engagements:
+                    e["platform"] = "freelancer"
+                    e["description"] = ""
+                logger.info("[Freelancer] %d active project ditemukan.", len(engagements))
+                return engagements
         except Exception as exc:
             logger.error("[Freelancer] Error cek engagements: %s", exc)
-            return []
+        return []
 
     def deliver_work(self, engagement: dict, file_path: str) -> bool:
         """
         Kirim hasil kerja ke klien Freelancer melalui messaging system.
         """
-        try:
-            self.browser.navigate(engagement.get("url", "https://www.freelancer.com/manage"))
-            page = self.browser.page
-            page.wait_for_timeout(4000)
+        delivery_msg = (
+            f"Hello,\n\nI have completed the work for '{engagement.get('title', 'this project')}'. "
+            "The solution follows SOLID principles and includes comprehensive unit tests. "
+            "Please find the attached file. I'm available for any questions or revisions.\n\n"
+            "Best regards"
+        )
 
-            delivery_msg = (
-                f"Hello,\n\nI have completed the work for '{engagement.get('title', 'this project')}'. "
-                "The solution follows SOLID principles and includes comprehensive unit tests. "
-                "Please find the attached file. I'm available for any questions or revisions.\n\n"
-                "Best regards"
-            )
+        result = self.browser.execute_task(
+            f"Buka project Freelancer: {engagement.get('url', 'https://www.freelancer.com/manage')}. "
+            f"Upload file hasil kerja dari path: {file_path}. "
+            f"Kirim pesan chat ke klien dengan teks ini: {delivery_msg[:200]}.",
+            max_steps=20
+        )
 
-            # Upload file jika ada input file
-            file_input = page.locator("input[type='file']").first
-            if file_input:
-                file_input.set_input_files(file_path)
-                page.wait_for_timeout(2000)
-
-            # Kirim pesan
-            msg_box = page.locator("div[contenteditable='true'], textarea[id*='chatInput']").last
-            if msg_box.is_visible():
-                self.browser.human_type(msg_box, delivery_msg)
-                page.keyboard.press("Enter")
-                logger.info("[Freelancer] Pekerjaan berhasil didelivery ke: %s", engagement.get("title"))
-                return True
-
-        except Exception as exc:
-            logger.error("[Freelancer] Gagal deliver ke Freelancer: %s", exc)
+        if "FAILED" not in result:
+            logger.info("[Freelancer] Pekerjaan berhasil didelivery ke: %s", engagement.get("title"))
+            return True
         return False

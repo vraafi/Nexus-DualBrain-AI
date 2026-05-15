@@ -47,3 +47,5 @@ setuptools<70
 llm-sandbox[docker]>=0.1.0
 docker>=7.0.0
 mcp
+browser-use>=0.1.0
+langchain-google-genai>=1.0.0
