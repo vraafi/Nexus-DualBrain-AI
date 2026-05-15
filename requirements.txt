@@ -40,5 +40,10 @@ camoufox==0.4.11
 setuptools<70
 
 # --- LLM Sandbox ---
-llm-sandbox>=0.1.0
+# PENTING: Gunakan llm-sandbox[docker] bukan llm-sandbox saja
+# llm-sandbox membutuhkan Python package 'docker' (Docker SDK) secara terpisah
+# dari Docker Desktop. Tanpa ini muncul error:
+# "Docker backend requires 'docker' package"
+llm-sandbox[docker]>=0.1.0
+docker>=7.0.0
 mcp
