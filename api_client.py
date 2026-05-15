@@ -44,7 +44,10 @@ class GeminiClient:
         """
         logging.info(f"DuckDuckGo Search: '{query}'")
         try:
-            from duckduckgo_search import DDGS
+            try:
+                from ddgs import DDGS
+            except ImportError:
+                from duckduckgo_search import DDGS
             with DDGS() as ddgs:
                 results = list(ddgs.text(query, max_results=5))
             if results:
@@ -55,7 +58,7 @@ class GeminiClient:
                 return "\n\n".join(snippets[:5])
             return "Tidak ada hasil ditemukan."
         except ImportError:
-            logging.warning("duckduckgo_search tidak terinstall. Jalankan: pip install duckduckgo-search")
+            logging.warning("ddgs/duckduckgo_search tidak terinstall. Jalankan: pip install ddgs")
             return ""
         except Exception as e:
             logging.warning(f"DuckDuckGo search gagal: {e}")
