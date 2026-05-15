@@ -696,7 +696,22 @@ def run_coding_benchmarks(llm, hermes):
 
         # Clone repo tersebut ke folder temp
         clone_dir = f"temp_{repo_name}"
-        subprocess.run(["gh", "repo", "clone", full_repo_name, clone_dir], capture_output=True, text=True)
+        clone_res = subprocess.run(
+            ["gh", "repo", "clone", full_repo_name, clone_dir],
+            capture_output=True, text=True
+        )
+        # Pastikan clone_dir ada — buat manual jika clone gagal
+        if not os.path.isdir(clone_dir):
+            logging.warning("[Benchmark] Clone gagal (%s). Membuat direktori manual...",
+                            clone_res.stderr.strip()[:100])
+            os.makedirs(clone_dir, exist_ok=True)
+            # Init git di dalam direktori agar commit/push bisa berjalan nanti
+            subprocess.run(["git", "init"], cwd=clone_dir, capture_output=True)
+            subprocess.run(
+                ["git", "remote", "add", "origin",
+                 f"https://github.com/{full_repo_name}.git"],
+                cwd=clone_dir, capture_output=True
+            )
 
         # 2. Persiapan Prompt Antigravity (Dengan Proteksi Requirement & 10x Retry)
         antigravity_prompt = (
@@ -793,12 +808,8 @@ def run_coding_benchmarks(llm, hermes):
             # Jangan lakukan push, skip task ini sampai klien menjawab
             continue
 
-        logging.info("[Benchmark] Antigravity selesai memproses file! Mem-push ke GitHub...")
-        push_res = subprocess.run(["git", "-C", clone_dir, "push", "origin", "main"], capture_output=True, text=True)
-        if push_res.returncode == 0:
-            logging.info("[Auto-Publish] ✅ SUKSES! Antigravity berhasil mem-push kode langsung ke main branch.")
-        else:
-            logging.error("[Auto-Publish] Gagal git push: %s", push_res.stderr)
+        # CATATAN: Push ke GitHub dilakukan SETELAH sandbox test lulus (lihat bawah)
+        # Jangan push sekarang — kode belum diuji!
 
         # 4. Pindahkan kode murni buatan Antigravity ke luar untuk dites Sandbox
         file_name = f"benchmark_{task['level'].lower()}.py"
@@ -885,10 +896,45 @@ def run_coding_benchmarks(llm, hermes):
                     f.write(f"# ERROR: Semua agent gagal membuat kode untuk task: {task['title']}\n")
                 logging.error("[Benchmark] Semua fallback gagal untuk task: %s", task['level'])
                 
-        # 5. Test di Sandbox (Gemma 4 menguji Jules)
+        # 5. Test di Sandbox DULU — baru push ke GitHub jika LULUS
+        logging.info("[Benchmark] Menguji kode di sandbox sebelum push ke GitHub...")
         passed = sandbox.test_code(file_name)
         status = "✅ PASSED" if passed else "❌ FAILED"
         results.append(f"{task['level']} ({task['title']}): {status}")
+
+        # 6. Push ke GitHub HANYA jika sandbox lulus
+        if passed:
+            logging.info("[Benchmark] Sandbox LULUS. Menyalin kode ke repo dan push ke GitHub...")
+            # Salin file yang sudah lulus ke dalam clone_dir
+            shutil.copy(file_name, os.path.join(clone_dir, file_name))
+            # Commit dan push
+            subprocess.run(["git", "-C", clone_dir, "add", file_name], capture_output=True)
+            subprocess.run(
+                ["git", "-C", clone_dir, "commit", "-m",
+                 f"feat: add benchmark {task['level']} — sandbox PASSED"],
+                capture_output=True, text=True
+            )
+            push_res = subprocess.run(
+                ["git", "-C", clone_dir, "push", "origin", "main"],
+                capture_output=True, text=True
+            )
+            if push_res.returncode == 0:
+                logging.info("[Auto-Publish] ✅ SUKSES! Kode yang sudah lulus sandbox di-push ke: %s",
+                             full_repo_name)
+                hermes.send_message(
+                    f"✅ Benchmark {task['level']} LULUS sandbox dan di-push ke GitHub!\n"
+                    f"Repo: `{full_repo_name}`"
+                )
+            else:
+                logging.error("[Auto-Publish] Gagal git push: %s", push_res.stderr[:200])
+        else:
+            logging.warning(
+                "[Benchmark] ❌ Sandbox GAGAL untuk %s. Kode TIDAK di-push ke GitHub.",
+                task['level']
+            )
+            hermes.send_message(
+                f"❌ Benchmark {task['level']} GAGAL sandbox. Kode tidak di-push ke GitHub."
+            )
         
     # Kirim hasil ke user
     result_text = "\n".join(results)
