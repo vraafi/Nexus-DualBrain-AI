@@ -360,37 +360,117 @@ class BrowserAgent:
     def request_human_help(self, reason: str = "Butuh bantuan CAPTCHA/Login"):
         """
         Pause agent, minta bantuan user.
-        Brave CDP: ubah overlay ke hijau, tunggu URL berubah.
+        Brave CDP: ubah overlay ke hijau, tunggu sampai login terdeteksi.
         Camoufox: log warning + auto-retry setelah 30 detik.
+
+        Deteksi login (multi-layer):
+          1. URL berubah dari URL awal DAN tidak ada keyword login/challenge
+          2. URL berubah DAN form password/login tidak ada di DOM
+          3. Fallback: cek presence elemen dashboard (avatar, nav)
         """
         if self._use_camoufox:
             self.logger.warning(
-                "[Camoufox] Butuh intervensi manual: %s\
-"
+                "[Camoufox] Butuh intervensi manual: %s\n"
                 "Camoufox berjalan headless. Coba lagi dalam 30 detik...", reason
             )
             time.sleep(30)
             return
 
         self.logger.warning("[AI PAUSED] Agent meminta bantuan Anda: %s", reason)
+        self.logger.warning("[AI PAUSED] Silakan selesaikan CAPTCHA/2FA/OTP di browser, "
+                            "agent akan otomatis melanjutkan setelah terdeteksi login.")
         self.set_agent_state("WAITING", reason)
+
+        # Rekam URL awal untuk deteksi navigasi
+        try:
+            initial_url = self.page.url
+        except Exception:
+            initial_url = ""
+
+        LOGIN_KEYWORDS = ("login", "challenge", "signup", "sign-in", "authenticate",
+                          "two-factor", "verification", "captcha", "security-check")
 
         max_wait = 600
         elapsed = 0
         while elapsed < max_wait:
-            time.sleep(5)
-            elapsed += 5
+            time.sleep(2)
+            elapsed += 2
             try:
-                current_url = self.page.url.lower()
-                if "login" not in current_url and "challenge" not in current_url and "signup" not in current_url:
-                    self.logger.info("[AI DETECTED] Deteksi otomatis: sudah berhasil login!")
+                if not self.page or self.page.is_closed():
                     break
-            except Exception:
-                pass
-            if elapsed % 60 == 0:
-                self.logger.info("Masih menunggu bantuan Anda... (%d menit berlalu)", elapsed // 60)
 
-        self.logger.info("[AI RESUMED] Agent kembali mengambil alih!")
+                # Tunggu page selesai transisi
+                try:
+                    self.page.wait_for_load_state("domcontentloaded", timeout=1500)
+                except Exception:
+                    pass
+
+                current_url = self.page.url
+                current_url_lower = current_url.lower()
+
+                # Layer 1: URL berubah dan tidak ada keyword login
+                url_changed = current_url_lower != initial_url.lower()
+                has_login_keyword = any(kw in current_url_lower for kw in LOGIN_KEYWORDS)
+
+                if url_changed and not has_login_keyword:
+                    self.logger.info("[AI DETECTED] ✅ Login terdeteksi via URL change: %s", current_url)
+                    break
+
+                # Layer 2: URL berubah + form password hilang dari DOM
+                if url_changed:
+                    try:
+                        pw_count = self.page.locator(
+                            "input[type='password'], "
+                            "input[name*='login'], "
+                            "input[id*='login'], "
+                            "input[name*='password']"
+                        ).count()
+                        if pw_count == 0:
+                            self.logger.info(
+                                "[AI DETECTED] ✅ Login terdeteksi via DOM (form hilang). URL: %s",
+                                current_url
+                            )
+                            break
+                    except Exception:
+                        pass
+
+                # Layer 3: Cek elemen yang hanya muncul saat sudah login
+                try:
+                    logged_in_selectors = [
+                        "[data-test='nav-user-menu']",
+                        ".up-avatar",
+                        "nav[aria-label='main']",
+                        "[data-ev-label='profile_photo']",
+                        ".o-profile-nav",
+                        "[data-qa='nav-dashboard']",
+                    ]
+                    for sel in logged_in_selectors:
+                        if self.page.locator(sel).count() > 0:
+                            self.logger.info(
+                                "[AI DETECTED] ✅ Login terdeteksi via elemen dashboard (%s).", sel
+                            )
+                            break
+                    else:
+                        if elapsed % 60 == 0:
+                            self.logger.info(
+                                "Menunggu login... (%d menit berlalu) | URL: %s",
+                                elapsed // 60, current_url
+                            )
+                        continue
+                    break
+                except Exception:
+                    pass
+
+                if elapsed % 60 == 0:
+                    self.logger.info(
+                        "Menunggu login... (%d menit berlalu) | URL: %s",
+                        elapsed // 60, current_url
+                    )
+
+            except Exception as e:
+                self.logger.debug("[request_human_help] Exception saat poll: %s", e)
+
+        self.logger.info("[AI RESUMED] ✅ Agent kembali mengambil alih!")
         self.set_agent_state("WORKING")
 
     def _is_connected(self) -> bool:
