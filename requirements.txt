@@ -1,51 +1,103 @@
-# ─── Browser Automation & Stealth ───
-# PENTING: Jangan upgrade playwright-stealth ke v2.x (breaking changes)
-playwright==1.43.0
+# ════════════════════════════════════════════════════════════════
+# requirements.txt — Nexus DualBrain AI
+# Update: Mei 2026 — sinkronisasi setelah audit & perbaikan bug
+#
+# CARA INSTALL (jalankan di terminal/cmd):
+#   pip install -r requirements.txt
+#   playwright install chromium
+#
+# CATATAN PENTING:
+#   • Python 3.11+ diperlukan (3.12 direkomendasikan)
+#   • Brave/Chrome harus diinstall terpisah (bukan lewat pip)
+#   • Setelah install, jalankan: playwright install chromium
+# ════════════════════════════════════════════════════════════════
+
+
+# ─── Browser Automation (INTI — jangan downgrade) ─────────────
+# browser-use: LLM-driven browser automation
+# PENTING: Versi minimum 0.12.6 — versi lama pakai BrowserConfig
+#          yang sudah dihapus dan menyebabkan ImportError
+# Repo: https://github.com/browser-use/browser-use (60k+ stars)
+browser-use>=0.12.6
+
+# Playwright: engine browser yang dipakai browser-use
+# Setelah pip install, wajib jalankan: playwright install chromium
+playwright>=1.43.0
+
+# Stealth mode — hindari deteksi bot oleh Upwork/Fiverr/Freelancer
 playwright-stealth==1.0.6
 python-ghost-cursor==0.1.1
-bezier==2024.6.20
+bezier>=2024.6.20
 
-# ─── HTTP & Web Scraping ───
+# Camoufox — browser stealth alternatif dengan fingerprint realistis
+camoufox>=0.4.11
+
+
+# ─── LLM / AI (INTI — jangan downgrade) ──────────────────────
+# LangChain Google Generative AI — wrapper Gemini/Gemma untuk browser-use
+# PENTING: Versi minimum 4.2.2 — versi lama tidak kompatibel dengan
+#          browser-use 0.12.x dan menyebabkan AttributeError
+# Repo: https://github.com/langchain-ai/langchain-google (8k+ stars)
+langchain-google-genai>=4.2.2
+
+# LangChain core (dependensi langchain-google-genai)
+langchain>=0.3.0
+langchain-core>=0.3.0
+
+
+# ─── Retry & Resilience ───────────────────────────────────────
+# tenacity: retry dengan exponential backoff — dipakai di browser_agent.py
+# BARU ditambahkan pada audit Mei 2026 (sebelumnya tidak ada retry sama sekali)
+# Repo: https://github.com/jd/tenacity (43k+ stars, dipakai Spotify & Netflix)
+tenacity>=9.1.4
+
+
+# ─── HTTP & Web Scraping ──────────────────────────────────────
 requests>=2.32.5
-duckduckgo-search>=5.3.0
 beautifulsoup4>=4.14.3
+lxml>=5.0.0
 
-# ─── System & Utilities ───
-psutil>=7.2.2
+# DuckDuckGo Search — web search tanpa API key (dipakai api_client.py)
+# Coba install keduanya, pakai salah satu yang berhasil:
+duckduckgo-search>=5.3.0
+
+
+# ─── LLM Sandbox (eksekusi kode aman di Docker) ───────────────
+# PENTING: Gunakan llm-sandbox[docker] bukan llm-sandbox biasa
+# Membutuhkan Docker Desktop yang sudah berjalan
+# Repo: https://github.com/vndee/llm-sandbox
+llm-sandbox[docker]>=0.1.0
+docker>=7.0.0
+
+
+# ─── Sistem & Utilitas ────────────────────────────────────────
 python-dotenv>=1.2.1
+psutil>=7.2.2
+setuptools<70
 
-# ─── Keamanan: Enkripsi vault kredensial ───
-cryptography>=45.0.1
 
-# ─── Web Dashboard ───
-flask==3.0.2
+# ─── Keamanan: Enkripsi vault kredensial ──────────────────────
+# Dipakai identity_manager.py untuk enkripsi username/password
+cryptography>=45.0.0
 
-# ─── Stealth Browser (lebih baik dari playwright-stealth biasa) ───
-camoufox==0.4.11
 
-# ─── HERMES AGENT ────────────────────────────────────────────────
-# Hermes Agent (by NousResearch) — self-improving AI agent framework.
-# Install dari GitHub (BUKAN dari PyPI):
+# ─── Web Dashboard (opsional) ─────────────────────────────────
+flask>=3.0.2
+
+
+# ─── MCP Tools ────────────────────────────────────────────────
+mcp>=1.0.0
+
+
+# ════════════════════════════════════════════════════════════════
+# HERMES AGENT — install TERPISAH dari GitHub (BUKAN dari PyPI)
+# ════════════════════════════════════════════════════════════════
 #
 #   pip install git+https://github.com/NousResearch/hermes-agent.git
 #
-# Hermes Agent menyediakan:
-#   • Self-improving learning loop (auto-generates reusable skills)
-#   • Persistent cross-session memory
-#   • Multi-platform gateway (Telegram, Discord, Slack)
-#   • Python-native AIAgent class
+# ════════════════════════════════════════════════════════════════
 #
-# Docs: https://github.com/NousResearch/hermes-agent
-# ─────────────────────────────────────────────────────────────────
-setuptools<70
-
-# --- LLM Sandbox ---
-# PENTING: Gunakan llm-sandbox[docker] bukan llm-sandbox saja
-# llm-sandbox membutuhkan Python package 'docker' (Docker SDK) secara terpisah
-# dari Docker Desktop. Tanpa ini muncul error:
-# "Docker backend requires 'docker' package"
-llm-sandbox[docker]>=0.1.0
-docker>=7.0.0
-mcp
-browser-use>=0.1.0
-langchain-google-genai>=1.0.0
+# SETELAH SEMUA INSTALL, jalankan:
+#   playwright install chromium
+#
+# ════════════════════════════════════════════════════════════════
