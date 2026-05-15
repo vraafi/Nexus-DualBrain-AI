@@ -228,7 +228,8 @@ class BrowserAgent:
         try:
             self.logger.info("Mencoba konek ke Brave: %s ...", url)
             pw = sync_playwright().start()
-            browser = pw.chromium.connect_over_cdp(url, timeout=30000)
+            # Timeout 60s — WSL→Windows bridge kadang lambat saat reconnect
+            browser = pw.chromium.connect_over_cdp(url, timeout=60000)
             if not browser.contexts:
                 pw.stop()
                 self.logger.warning("%s terhubung tapi tidak ada tab aktif.", url)
