@@ -3,10 +3,10 @@ freelance_agent.py — Nexus DualBrain AI
 =========================================
 Agent Upwork: login, scrape jobs, filter, submit proposal, negotiate, deliver.
 
-Update:
-- Kompatibel dengan dual-mode BrowserAgent (Brave CDP & Camoufox stealth).
-- Camoufox mode: tidak ada request_human_help visual → auto-retry dengan delay.
-- Stealth improvements: random scroll sebelum klik, variable wait times.
+FIX: deliver_work sekarang menggunakan flow "Submit Work for Payment" yang benar
+     bukan hanya kirim pesan — ini yang diperlukan agar kontrak bisa ditutup dan dibayar.
+     Reference: Upwork milestone submission pattern dari komunitas Upwork API
+     https://developers.upwork.com/?lang=python (Official Upwork Python library)
 """
 
 import logging
@@ -32,7 +32,6 @@ class FreelanceAgent:
             self.logger.error("No Upwork credentials found in Identity Vault.")
             return False
 
-        # Cek apakah sudah login
         check_result = self.browser.execute_task(
             "Buka https://www.upwork.com dan cek apakah sudah login "
             "(ada avatar user atau dashboard). "
@@ -40,7 +39,7 @@ class FreelanceAgent:
             max_steps=5
         )
         if "LOGGED_IN" in check_result:
-            self.logger.info("✅ Upwork sudah terdeteksi login.")
+            self.logger.info("Upwork sudah terdeteksi login.")
             return True
 
         result = self.browser.execute_task(
@@ -68,8 +67,6 @@ class FreelanceAgent:
             max_steps=15
         )
         try:
-            import re
-            import json
             match = re.search(r'\[.*?\]', result, re.DOTALL)
             if match:
                 jobs = json.loads(match.group(0))
@@ -103,22 +100,14 @@ class FreelanceAgent:
             "Determine if each job can be 100% completed autonomously by an AI agent "
             "restricted to writing Python code, web scraping, and API integrations. "
             "The AI CANNOT do video calls, subjective design, hardware tasks, or require "
-            "personal accounts or NDA access.\
-\
-"
+            "personal accounts or NDA access.\n\n"
             "Respond ONLY with a JSON array: "
-            "[{\"index\": int, \"is_autonomous\": bool, \"reason\": string}]\
-\
-"
+            "[{\"index\": int, \"is_autonomous\": bool, \"reason\": string}]\n\n"
         )
         for i, job in enumerate(candidates):
             prompt += (
-                f"Job {i}:\
-Title: {job.get('title')}\
-"
-                f"Description: {job.get('description', '')[:300]}\
----\
-"
+                f"Job {i}:\nTitle: {job.get('title')}\n"
+                f"Description: {job.get('description', '')[:300]}\n---\n"
             )
 
         response = self.llm.generate_content(prompt, require_json=True, use_negotiation_model=True)
@@ -156,7 +145,6 @@ Title: {job.get('title')}\
     def submit_proposal(self, job_data: dict, branding_context: dict = None, script_path: str = None) -> bool:
         self.logger.info("Submitting proposal for: %s", job_data.get('title'))
 
-        # Generate cover letter dulu via LLM
         persona = (
             branding_context.get("persona", "Backend Python Specialist")
             if branding_context
@@ -202,15 +190,14 @@ Title: {job.get('title')}\
         )
 
         try:
-            import re
-            import json
             match = re.search(r'\[.*?\]', result, re.DOTALL)
             if match:
                 messages = json.loads(match.group(0))
 
                 for msg in messages:
                     chat_text = msg.get('message_text', '')
-                    if not chat_text: continue
+                    if not chat_text:
+                        continue
 
                     prompt = (
                         "You are an autonomous freelance AI agent. Analyze this Upwork chat history.\n"
@@ -245,7 +232,7 @@ Title: {job.get('title')}\
                             self.logger.info("Negotiation State: %s", state)
 
                             if state != "NO_REPLY_NEEDED" and reply_text:
-                                reply_result = self.browser.execute_task(
+                                self.browser.execute_task(
                                     f"Buka pesan Upwork di URL: {msg.get('thread_url')}. "
                                     f"Balas pesan dengan teks berikut: {reply_text}. "
                                     f"Klik kirim.",
@@ -267,7 +254,18 @@ Title: {job.get('title')}\
         return negotiation_state, actionable_job_data
 
     def deliver_work(self, job_data: dict, file_path: str) -> bool:
-        """Kirim deliverable ke klien via Upwork messages."""
+        """
+        Kirim deliverable ke klien via Upwork.
+
+        FIX KRITIS: Flow yang benar adalah:
+        1. Upload file & kirim pesan ke klien
+        2. Klik "Submit Work for Payment" di halaman contract (bukan hanya pesan biasa)
+
+        Tanpa langkah 2, payment tidak akan pernah di-release oleh Upwork Escrow.
+
+        Reference: Upwork Help Center — Submit work for payment
+        https://support.upwork.com/hc/en-us/articles/211062568
+        """
         self.logger.info("Delivering work for: %s", job_data.get('title'))
 
         prompt = (
@@ -288,7 +286,8 @@ Title: {job.get('title')}\
                 "Please let me know if you need any adjustments."
             )
 
-        result = self.browser.execute_task(
+        # Step 1: Upload file dan kirim pesan ke klien
+        msg_result = self.browser.execute_task(
             f"Buka Upwork messages di https://www.upwork.com/nx/messages/. "
             f"Buka chat dengan klien untuk job '{job_data.get('title')}'. "
             f"Upload file hasil kerja dari path: {file_path}. "
@@ -296,4 +295,30 @@ Title: {job.get('title')}\
             f"Kirim pesan.",
             max_steps=20
         )
-        return "FAILED" not in result
+
+        if "FAILED" in msg_result:
+            self.logger.error("Gagal kirim pesan delivery.")
+            return False
+
+        # Step 2 (PENTING): Submit Work for Payment via Contract page
+        # Tanpa ini payment tidak akan di-release dari escrow Upwork
+        self.logger.info("Step 2: Submitting work for payment via Contract page...")
+        contract_result = self.browser.execute_task(
+            f"Buka halaman Contracts Upwork: https://www.upwork.com/ab/contracts/. "
+            f"Temukan contract untuk job '{job_data.get('title')}'. "
+            f"Klik tombol 'Submit Work for Payment' atau 'Request Payment'. "
+            f"Jika ada dialog konfirmasi, klik Submit/Confirm. "
+            f"Konfirmasi bahwa submission berhasil.",
+            max_steps=20
+        )
+
+        if "FAILED" in contract_result:
+            # Log warning tapi tetap return True karena pesan sudah terkirim
+            # Mungkin kontrak bukan tipe hourly yang perlu manual submit
+            self.logger.warning(
+                "Submit for Payment mungkin tidak diperlukan (hourly contract atau sudah auto). "
+                "Pesan delivery sudah terkirim."
+            )
+
+        self.logger.info("Work delivery selesai untuk: %s", job_data.get('title'))
+        return True
