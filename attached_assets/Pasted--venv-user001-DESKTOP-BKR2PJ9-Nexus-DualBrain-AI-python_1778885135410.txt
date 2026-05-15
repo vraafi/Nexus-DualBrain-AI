@@ -1,0 +1,73 @@
+(venv) user001@DESKTOP-BKR2PJ9:~/Nexus-DualBrain-AI$ python3 main.py
+INFO     [root] ============================================================
+INFO     [root] Nexus DualBrain AI — Autonomous Freelance Agent
+INFO     [root] ============================================================
+INFO     [root] ✅ Hermes Agent (skills, memory, Telegram) : AKTIF
+INFO     [root] ✅ Antigravity (autonomous local coding)   : AKTIF
+INFO     [root] ✅ Aider (fallback coding agent)           : AKTIF
+INFO     [root] ✅ GitHub CLI (issue/PR management)       : AKTIF
+INFO     [root] ℹ️  Hermes CLI (optional, extra features)  : tidak terinstall
+INFO     [root] ============================================================
+INFO     [hermes_agent] [Hermes] Mode fallback: Telegram direct (HERMES_API_KEY tidak di-set)
+INFO     [skill_library] [SkillLibrary] Inisialisasi selesai. DB: /home/user001/Nexus-DualBrain-AI/output/skill_library.db
+INFO     [self_improver] [SelfImprover] AGI self-reflection engine aktif.
+INFO     [root] Retrieving branding strategy for upwork...
+INFO     [root] Strategy applied: Problem Solver Professional
+INFO     [root] Retrieving branding strategy for fiverr...
+INFO     [root] Strategy applied: Productized Service
+INFO     [root] Retrieving branding strategy for freelancer...
+INFO     [root] Strategy applied: Professional Freelancer & Senior Engineer
+INFO     [hermes_agent] [Hermes] Command listener aktif.
+INFO     [browser_agent] [BrowserAgent] Mode: Browser-Use (LLM-driven, retry enabled)
+INFO     [browser_agent] [BrowserAgent] Browser-Use ready (auto-managed lifecycle).
+INFO     [freelance_agent] Initiating Upwork login sequence via Browser-Use...
+INFO     [root] Credential dimuat untuk upwork (User: ema...da)
+INFO     [browser_agent] [BrowserAgent] Menunggu giliran (antrian browser)...
+INFO     [browser_agent] [BrowserAgent] Giliran dapat, memulai task.
+INFO     [browser_agent] [BrowserAgent] BRAVE_PATH tidak ditemukan, pakai Chromium bawaan Playwright.
+INFO     [browser_agent] [BrowserAgent] Singleton browser dibuat (keep_alive=True).
+INFO     [service] Using anonymized telemetry, see https://docs.browser-use.com/development/monitoring/telemetry.
+INFO     [Agent] 🔗 Found URL in task: https://www.upwork.com, adding as initial action...
+INFO     [Agent] 🎯 Task: Buka https://www.upwork.com dan cek apakah sudah login (ada avatar user atau dashboard). Jawab hanya 'LOGGED_IN' atau 'NOT_LOGGED_IN'
+INFO     [Agent] Starting a browser-use agent with version 0.12.6, with provider=google and model=gemini-2.0-flash
+INFO     [Agent]   ▶️   navigate: url: https://www.upwork.com, new_tab: False
+WARNING  [BrowserSession] ⚠️ Page readiness timeout (8.0s, 8722ms) for https://www.upwork.com
+INFO     [tools] 🔗 Navigated to https://www.upwork.com
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 1:
+WARNING  [Agent] ❌ Result failed 1/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 2:
+WARNING  [Agent] ❌ Result failed 2/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 3:
+WARNING  [Agent] ❌ Result failed 3/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 4:
+WARNING  [Agent] ❌ Result failed 4/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 5:
+INFO     [Agent] 📋 Exploration nudge injected after 5 steps without a plan
+WARNING  [Agent] ❌ Result failed 5/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 6:
+INFO     [Agent] 📋 Exploration nudge injected after 6 steps without a plan
+ERROR    [Agent] ❌ Result failed 6/6 times: items
+ERROR    [Agent] ❌ Stopping due to 5 consecutive failures
+INFO     [Agent]
+INFO     [Agent] Did the Agent not work as expected? Let us fix this!
+INFO     [Agent]    Open a short issue on GitHub: https://github.com/browser-use/browser-use/issues
+INFO     [browser_agent] [BrowserAgent] Menunggu giliran (antrian browser)...
+INFO     [browser_agent] [BrowserAgent] Giliran dapat, memulai task.
+INFO     [Agent] 🔗 Found URL in task: https://www.upwork.com/ab/account-security/login, adding as initial action...
+INFO     [Agent] 🎯 Task: Login ke Upwork di https://www.upwork.com/ab/account-security/login. Email: email_anda. Password: password_anda. Jika ada CAPTCHA atau 2FA, tunggu dan coba lagi. Konfirmasi berhasil login dengan melihat dashboard Upwork.
+INFO     [Agent] Starting a browser-use agent with version 0.12.6, with provider=google and model=gemini-2.0-flash
+INFO     [Agent]   ▶️   navigate: url: https://www.upwork.com/ab/account-security/login, new_tab: False
+WARNING  [BrowserSession] ⚠️ Page readiness timeout (3.0s, 3474ms) for https://www.upwork.com/ab/account-security/login
+INFO     [tools] 🔗 Navigated to https://www.upwork.com/ab/account-security/login

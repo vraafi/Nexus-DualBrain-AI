@@ -43,33 +43,61 @@ _SHARED_BROWSER: Optional[Browser] = None
 _SHARED_BROWSER_LOCK = threading.Lock()
 
 
+def _get_wsl_host_ip() -> Optional[str]:
+    """
+    Ambil IP Windows host dari dalam WSL secara otomatis.
+    Dibaca dari /etc/resolv.conf (standar WSL2).
+    Referensi: https://learn.microsoft.com/en-us/windows/wsl/networking
+    """
+    try:
+        with open("/etc/resolv.conf") as f:
+            for line in f:
+                if line.startswith("nameserver"):
+                    ip = line.split()[1].strip()
+                    if ip and ip != "127.0.0.1":
+                        return ip
+    except Exception:
+        pass
+    return None
+
+
+def _probe_cdp(url: str, timeout: float = 2.0) -> bool:
+    """
+    Cek apakah ada browser yang sudah berjalan dengan remote debugging di URL ini.
+    Return True jika CDP endpoint aktif.
+    """
+    import urllib.request
+    import urllib.error
+    try:
+        req = urllib.request.urlopen(f"{url}/json/version", timeout=timeout)
+        return req.status == 200
+    except Exception:
+        return False
+
+
 def _resolve_brave_path() -> Optional[str]:
     """
     Cari path executable Brave browser dari env variable atau lokasi default.
-    Prioritas:
-      1. BRAVE_PATH          — env var eksplisit (direkomendasikan)
-      2. BROWSER_EXECUTABLE  — env var alternatif
-      3. Lokasi default Linux/Windows/macOS (fallback otomatis)
-    Return None jika tidak ditemukan (pakai Chromium bawaan Playwright).
+    Termasuk path WSL untuk Brave yang ada di Windows (/mnt/c/...).
     """
     import shutil
 
-    # 1. Dari env variable
+    # 1. Dari env variable eksplisit
     for env_key in ("BRAVE_PATH", "BROWSER_EXECUTABLE", "BRAVE_EXECUTABLE"):
-        path = os.environ.get(env_key)
+        path = os.environ.get(env_key, "").strip()
         if path and os.path.isfile(path):
             return path
 
-    # 2. Fallback ke lokasi umum Brave di berbagai OS
+    # 2. Lokasi umum — Linux native, WSL (via /mnt/c), macOS
     candidates = [
-        # Linux
+        # Linux native
         "/usr/bin/brave-browser",
         "/usr/bin/brave",
         "/snap/bin/brave",
         "/opt/brave.com/brave/brave",
-        # Windows (via WSL path tidak perlu, tapi kalau native)
-        r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-        r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
+        # WSL — Brave terinstall di Windows, diakses via /mnt/c
+        "/mnt/c/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
+        "/mnt/c/Program Files (x86)/BraveSoftware/Brave-Browser/Application/brave.exe",
         # macOS
         "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
     ]
@@ -78,8 +106,97 @@ def _resolve_brave_path() -> Optional[str]:
             return path
 
     # 3. Cari via PATH
-    found = shutil.which("brave-browser") or shutil.which("brave")
-    return found
+    return shutil.which("brave-browser") or shutil.which("brave")
+
+
+def _auto_launch_brave(brave_path: str, port: int = 9222) -> bool:
+    """
+    Launch Brave dengan remote debugging port secara otomatis.
+    Mendukung Linux native, WSL (via cmd.exe /c start), dan macOS.
+    Referensi pattern: https://github.com/browser-use/browser-use/issues/4709
+
+    Return True jika Brave berhasil distart dalam 10 detik.
+    """
+    import subprocess
+
+    flags = [
+        f"--remote-debugging-port={port}",
+        "--remote-debugging-address=0.0.0.0",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+
+    try:
+        if brave_path.endswith(".exe") or "/mnt/c/" in brave_path:
+            # WSL: jalankan .exe via cmd.exe agar berjalan di Windows
+            win_path = brave_path.replace("/mnt/c/", "C:\\").replace("/", "\\")
+            cmd = ["cmd.exe", "/c", "start", "", win_path] + flags
+            logger.info("[BrowserAgent] Launch Brave di Windows (WSL): %s", win_path)
+        else:
+            cmd = [brave_path] + flags
+            logger.info("[BrowserAgent] Launch Brave: %s", brave_path)
+
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as e:
+        logger.warning("[BrowserAgent] Gagal launch Brave: %s", e)
+        return False
+
+    # Tunggu sampai CDP aktif (max 15 detik)
+    for i in range(15):
+        time.sleep(1)
+        if _probe_cdp(f"http://127.0.0.1:{port}"):
+            logger.info("[BrowserAgent] Brave berhasil distart (CDP aktif setelah %ds).", i + 1)
+            return True
+        # Juga cek host WSL
+        wsl_ip = _get_wsl_host_ip()
+        if wsl_ip and _probe_cdp(f"http://{wsl_ip}:{port}"):
+            logger.info("[BrowserAgent] Brave aktif di Windows host %s:%d.", wsl_ip, port)
+            return True
+
+    logger.warning("[BrowserAgent] Brave tidak responsif setelah 15 detik.")
+    return False
+
+
+def _find_active_cdp_url(port: int = 9222) -> Optional[str]:
+    """
+    Cari CDP URL yang aktif secara otomatis tanpa config manual.
+    Urutan cek:
+      1. BRAVE_CDP_URL dari env
+      2. 127.0.0.1 (localhost / Linux native)
+      3. WSL host IP (Windows host dari WSL2)
+      4. IP umum WSL lainnya
+    """
+    candidates = []
+
+    # 1. Dari env (prioritas tertinggi)
+    env_url = os.environ.get("BRAVE_CDP_URL", "").strip()
+    if env_url:
+        candidates.append(env_url)
+
+    # 2. Localhost
+    candidates.append(f"http://127.0.0.1:{port}")
+
+    # 3. WSL host (Windows) — otomatis deteksi
+    wsl_ip = _get_wsl_host_ip()
+    if wsl_ip:
+        candidates.append(f"http://{wsl_ip}:{port}")
+
+    # 4. IP WSL umum lainnya
+    for ip in ("172.24.48.1", "172.16.0.1", "192.168.1.1"):
+        if ip != wsl_ip:
+            candidates.append(f"http://{ip}:{port}")
+
+    for url in candidates:
+        if _probe_cdp(url):
+            logger.info("[BrowserAgent] Brave CDP aktif di: %s", url)
+            return url
+
+    return None
 
 
 def _get_shared_browser(proxy=None) -> Browser:
@@ -87,41 +204,49 @@ def _get_shared_browser(proxy=None) -> Browser:
     Mengembalikan singleton Browser yang dibuat sekali dan dipakai ulang.
     Thread-safe: menggunakan _SHARED_BROWSER_LOCK untuk init.
 
-    Prioritas koneksi browser:
-      1. BRAVE_CDP_URL — connect ke Brave yang sudah berjalan via CDP (PALING DIREKOMENDASIKAN)
-                         Brave harus dijalankan dengan flag:
-                         brave --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0
-      2. BRAVE_PATH    — launch Brave baru (jika tidak ada CDP URL)
-      3. Playwright Chromium — fallback terakhir
+    Urutan deteksi browser (OTOMATIS, tanpa config manual):
+      1. Cek apakah Brave sudah berjalan dengan CDP di port umum
+         → Jika ya, langsung connect (pakai sesi Brave yang ada, termasuk login)
+      2. Jika tidak, cari path Brave dan launch otomatis dengan remote debugging
+         → Launch Brave, tunggu siap, lalu connect via CDP
+      3. Fallback: pakai Playwright Chromium (browser bawaan Linux)
 
     Referensi: https://github.com/browser-use/browser-use/issues/4709
+                https://github.com/browser-use/browser-use/issues/3718
     """
     global _SHARED_BROWSER
     with _SHARED_BROWSER_LOCK:
         if _SHARED_BROWSER is None:
-            cdp_url = os.environ.get("BRAVE_CDP_URL", "").strip()
+            # ── STEP 1: Cek apakah Brave sudah berjalan dengan CDP ──────────
+            cdp_url = _find_active_cdp_url()
+
+            if not cdp_url:
+                # ── STEP 2: Launch Brave otomatis ───────────────────────────
+                brave_path = _resolve_brave_path()
+                if brave_path:
+                    logger.info("[BrowserAgent] Brave belum berjalan — launch otomatis...")
+                    launched = _auto_launch_brave(brave_path)
+                    if launched:
+                        cdp_url = _find_active_cdp_url()
 
             if cdp_url:
-                # MODE 1: Connect ke Brave yang sudah berjalan via CDP
-                # Brave harus distart dengan: brave --remote-debugging-port=9222
-                logger.info("[BrowserAgent] Connect ke Brave via CDP: %s", cdp_url)
+                # Connect ke Brave via CDP (pakai sesi asli pengguna + cookie login)
+                logger.info("[BrowserAgent] Menggunakan Brave via CDP: %s", cdp_url)
                 profile = BrowserProfile(
                     keep_alive=True,
                     cdp_url=cdp_url,
                 )
             else:
-                # MODE 2: Launch browser baru (Brave atau Playwright Chromium)
+                # ── STEP 3: Fallback Playwright Chromium ────────────────────
+                logger.warning(
+                    "[BrowserAgent] Brave tidak ditemukan. Fallback ke Playwright Chromium. "
+                    "Untuk pakai Brave: jalankan Brave dulu atau set BRAVE_PATH di .env"
+                )
                 proxy_config = {"server": proxy} if proxy else None
-                brave_path = _resolve_brave_path()
-                if brave_path:
-                    logger.info("[BrowserAgent] Launch Brave baru: %s", brave_path)
-                else:
-                    logger.info("[BrowserAgent] Pakai Playwright Chromium (Brave tidak ditemukan).")
                 profile = BrowserProfile(
                     headless=False,
                     proxy=proxy_config,
                     keep_alive=True,
-                    executable_path=brave_path,
                 )
 
             _SHARED_BROWSER = Browser(browser_profile=profile)
