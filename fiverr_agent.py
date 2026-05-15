@@ -3,11 +3,13 @@ fiverr_agent.py
 ===============
 Agent untuk platform Fiverr: manage gig orders yang masuk,
 reply ke buyer, dan deliver hasil kerja.
-Berbeda dengan Upwork (kita apply ke job), di Fiverr kita
-menunggu order masuk ke Gig kita, lalu memprosesnya.
 
-UPDATE: Tambah check_gig_exists() dan create_gig() —
-agent bisa membuat Gig otomatis jika belum ada.
+FIX KRITIS: create_gig() dipecah menjadi beberapa execute_task terpisah
+            (bukan satu task 40 langkah yang sangat mudah gagal).
+            State machine approach — setiap step diverifikasi sebelum lanjut.
+
+Reference state-machine browser automation pattern:
+https://github.com/browser-use/browser-use/tree/main/examples (60k+ stars)
 """
 
 import logging
@@ -17,22 +19,12 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# GIG TEMPLATES — Dibuat sesuai aturan Fiverr 2026:
-#   - Judul awali "I will", max 80 karakter, tanpa karakter khusus (& / " +)
-#   - Hanya layanan yang BISA dikerjakan agent (Python script + sandbox test)
-#   - Tidak menjanjikan GUI, ML, database server, atau mobile app
-#   - Tags 5 frasa UNIK (bukan pengulangan kata yang sama)
-#   - Harga realistis: agent deliver dalam 1-3 hari
-# ─────────────────────────────────────────────────────────────────────────────
 GIG_TEMPLATES = [
     {
         "niche": "python_automation",
-        # 55 chars — sesuai aturan max 80, ideal <50 tapi masih oke
         "title": "I will write a Python automation script for your task",
         "category": "Programming & Tech",
         "subcategory": "Scripts & Utilities",
-        # 5 tag UNIK — hindari pengulangan, targetkan variasi pencarian berbeda
         "tags": ["python script", "task automation", "file processing", "data automation", "python bot"],
         "basic": {
             "label": "Single Task",
@@ -49,14 +41,12 @@ GIG_TEMPLATES = [
             "desc": "Complete automation solution: modular code, full test suite, scheduling support, and detailed documentation.",
             "price": 90, "days": 3, "revisions": 999,
         },
-        # Pertanyaan untuk buyer — wajib agar agent tahu apa yang harus dibuat
         "requirements": [
             "What task do you need automated? (Please be as specific as possible)",
             "What is the input? (e.g. CSV file, folder of files, API endpoint, website URL)",
             "What should the output look like? (e.g. CSV, JSON, printed report, modified files)",
             "Any specific Python libraries you prefer? (Leave blank if unsure — I will choose the best)",
         ],
-        # Deskripsi panjang (target 1000+ karakter) — digenerate LLM berdasarkan prompt ini
         "description_prompt": (
             "Write a professional Fiverr gig description for a Python automation script service. "
             "The seller is a skilled Python developer who delivers clean, well-tested scripts. "
@@ -73,7 +63,6 @@ GIG_TEMPLATES = [
     },
     {
         "niche": "web_scraping",
-        # 54 chars
         "title": "I will scrape website data and export it to CSV or JSON",
         "category": "Programming & Tech",
         "subcategory": "Data Processing",
@@ -155,8 +144,7 @@ class FiverrAgent:
             max_steps=15
         )
         try:
-            import re
-            match = re.search(r'\[.*?\]', result, re.DOTALL)
+            match = __import__('re').search(r'\[.*?\]', result, __import__('re').DOTALL)
             if match:
                 orders = json.loads(match.group(0))
                 for o in orders:
@@ -219,8 +207,7 @@ class FiverrAgent:
             max_steps=15
         )
         try:
-            import re
-            match = re.search(r'\{.*?\}', result, re.DOTALL)
+            match = __import__('re').search(r'\{.*?\}', result, __import__('re').DOTALL)
             if match:
                 data = json.loads(match.group(0))
                 return data.get("count", 0)
@@ -231,7 +218,6 @@ class FiverrAgent:
     def _generate_dynamic_template(self) -> dict:
         """
         Gunakan LLM untuk generate gig template unik.
-        Ini memastikan tawaran (offer) selalu berbeda.
         """
         prompt = (
             "Generate a JSON for a new Fiverr gig offering a unique Python automation or data scripting service. "
@@ -253,7 +239,10 @@ class FiverrAgent:
             if start != -1 and end != 0:
                 data = json.loads(resp[start:end])
                 data["niche"] = "dynamic"
-                data["description_prompt"] = f"Write a professional 1000 character Fiverr gig description for a service titled: '{data['title']}'. Emphasize Python and automation. Do NOT include markdown."
+                data["description_prompt"] = (
+                    f"Write a professional 1000 character Fiverr gig description for a service titled: "
+                    f"'{data['title']}'. Emphasize Python and automation. Do NOT include markdown."
+                )
                 return data
         except Exception as e:
             logger.error("Gagal generate dynamic template: %s", e)
@@ -266,7 +255,6 @@ class FiverrAgent:
         """
         description = self.llm.generate_content(template.get("description_prompt", ""))
 
-        # Fallback jika LLM gagal
         if not description or len(description) < 100:
             description = (
                 f"Welcome to my professional service!\n\n"
@@ -287,56 +275,138 @@ class FiverrAgent:
         return description
 
     def _click_next(self, page=None):
-        """Helper backward compat, walau di execute_task tidak perlu explicitly click next step-by-step biasa"""
+        """Helper backward compat."""
         pass
 
     def create_gig(self, template: dict = None) -> bool:
         """
-        Buat Gig baru di Fiverr secara otomatis.
-        Jika template None, gunakan LLM untuk membuat gig dinamis.
+        Buat Gig baru di Fiverr secara otomatis menggunakan STATE MACHINE approach.
+
+        FIX KRITIS: Sebelumnya satu execute_task 40 langkah yang sangat mudah gagal.
+        Sekarang dipecah menjadi 6 langkah kecil yang masing-masing diverifikasi.
+
+        State machine pattern reference:
+        https://github.com/browser-use/browser-use/tree/main/examples
         """
         if not template:
             template = self._generate_dynamic_template()
 
         logger.info("[Fiverr] Membuat Gig baru: '%s' ...", template.get("title", "Python Service"))
-
         description = self._generate_gig_description(template)
 
-        # Download temporary image
-        import urllib.request
         img_path = os.path.join(os.getcwd(), "gig_image.jpg")
         try:
+            import urllib.request
             safe_title = template["title"].replace(" ", "+")[:40]
             img_url = f"https://dummyimage.com/712x430/282c34/61dafb.jpg&text={safe_title}"
             urllib.request.urlretrieve(img_url, img_path)
         except Exception:
             pass
 
-        # Use browser-use to go through the Gig creation flow
-        # In reality, this flow is very complex and might require multiple execute_task calls,
-        # but for this agent we can give it a broad task.
-        task = (
-            f"Buat Fiverr gig baru.\n"
-            f"1. Navigasi ke halaman Manage Gigs, klik Create a new Gig.\n"
-            f"2. Judul: '{template['title']}'\n"
-            f"3. Kategori: Programming & Tech.\n"
-            f"4. Masukkan tags: {', '.join(template['tags'][:5])}.\n"
-            f"5. Lanjut ke pricing. Isi Basic: {template['basic']['price']}$, {template['basic']['days']} days. "
-            f"Standard: {template['standard']['price']}$, {template['standard']['days']} days. "
-            f"Premium: {template['premium']['price']}$, {template['premium']['days']} days.\n"
-            f"6. Lanjut ke description. Isi description: '{description[:500]}...'\n"
-            f"7. Lanjut ke requirements. Tambahkan requirement: '{template.get('requirements', ['Please describe your task'])[0]}'.\n"
-            f"8. Lanjut ke gallery. Upload file gambar di '{img_path}'.\n"
-            f"9. Publish gig."
+        # ── STATE 1: Navigasi ke halaman Create Gig ──────────────────────────
+        logger.info("[Fiverr] State 1: Navigasi ke Create Gig...")
+        step1 = self.browser.execute_task(
+            "Buka https://www.fiverr.com/gigs/new. "
+            "Pastikan halaman 'Overview' atau 'Create a New Gig' sudah terbuka. "
+            "Konfirmasi dengan menyebut title atau elemen halaman yang terlihat.",
+            max_steps=8
         )
+        if "FAILED" in step1:
+            logger.error("[Fiverr] Gagal navigasi ke Create Gig.")
+            return False
+        time.sleep(2)
 
-        result = self.browser.execute_task(task, max_steps=40)
-        return "FAILED" not in result
+        # ── STATE 2: Isi Overview (Title, Category, Tags) ────────────────────
+        logger.info("[Fiverr] State 2: Isi Overview...")
+        tags_str = ", ".join(template.get("tags", [])[:5])
+        step2 = self.browser.execute_task(
+            f"Di halaman Fiverr Create Gig, isi field-field berikut:\n"
+            f"1. Judul gig: '{template['title']}'\n"
+            f"2. Pilih Category: 'Programming & Tech'\n"
+            f"3. Tambahkan tags: {tags_str}\n"
+            f"Setelah semua terisi, klik tombol 'Save & Continue'.",
+            max_steps=15
+        )
+        if "FAILED" in step2:
+            logger.error("[Fiverr] Gagal isi Overview.")
+            return False
+        time.sleep(2)
+
+        # ── STATE 3: Isi Pricing ─────────────────────────────────────────────
+        logger.info("[Fiverr] State 3: Isi Pricing...")
+        basic = template.get("basic", {})
+        standard = template.get("standard", {})
+        premium = template.get("premium", {})
+        step3 = self.browser.execute_task(
+            f"Di halaman Fiverr Pricing, isi paket harga:\n"
+            f"Basic: nama '{basic.get('label', 'Basic')}', "
+            f"harga ${basic.get('price', 20)}, "
+            f"delivery {basic.get('days', 1)} hari, "
+            f"revisi {basic.get('revisions', 2)}x, "
+            f"deskripsi: '{basic.get('desc', 'Basic service')}'\n"
+            f"Standard: nama '{standard.get('label', 'Standard')}', "
+            f"harga ${standard.get('price', 45)}, "
+            f"delivery {standard.get('days', 2)} hari\n"
+            f"Premium: nama '{premium.get('label', 'Premium')}', "
+            f"harga ${premium.get('price', 90)}, "
+            f"delivery {premium.get('days', 3)} hari\n"
+            f"Klik 'Save & Continue'.",
+            max_steps=20
+        )
+        if "FAILED" in step3:
+            logger.error("[Fiverr] Gagal isi Pricing.")
+            return False
+        time.sleep(2)
+
+        # ── STATE 4: Isi Description & FAQ ───────────────────────────────────
+        logger.info("[Fiverr] State 4: Isi Description...")
+        step4 = self.browser.execute_task(
+            f"Di halaman Fiverr Description, isi field deskripsi dengan teks berikut "
+            f"(salin persis, tidak perlu tambahan apapun):\n"
+            f"'{description[:1000]}'\n"
+            f"Klik 'Save & Continue'.",
+            max_steps=15
+        )
+        if "FAILED" in step4:
+            logger.error("[Fiverr] Gagal isi Description.")
+            return False
+        time.sleep(2)
+
+        # ── STATE 5: Isi Requirements ────────────────────────────────────────
+        logger.info("[Fiverr] State 5: Isi Requirements...")
+        requirements = template.get("requirements", ["Please describe your task in detail."])
+        req_text = requirements[0] if requirements else "Please describe your task in detail."
+        step5 = self.browser.execute_task(
+            f"Di halaman Fiverr Requirements, tambahkan buyer requirement:\n"
+            f"Pertanyaan: '{req_text}'\n"
+            f"Pastikan tipe pertanyaan adalah 'Free Text'. "
+            f"Tandai sebagai 'Required'. "
+            f"Klik 'Save & Continue'.",
+            max_steps=12
+        )
+        if "FAILED" in step5:
+            logger.warning("[Fiverr] Gagal isi Requirements, lanjut ke Gallery.")
+        time.sleep(2)
+
+        # ── STATE 6: Upload Gallery Image & Publish ──────────────────────────
+        logger.info("[Fiverr] State 6: Upload image & Publish...")
+        step6 = self.browser.execute_task(
+            f"Di halaman Fiverr Gallery, upload file gambar dari path: '{img_path}'. "
+            f"Tunggu sampai upload selesai. "
+            f"Klik tombol 'Save & Continue' atau 'Publish'. "
+            f"Jika ada preview/publish button, klik untuk mempublikasikan gig.",
+            max_steps=20
+        )
+        if "FAILED" in step6:
+            logger.error("[Fiverr] Gagal upload gallery/publish.")
+            return False
+
+        logger.info("[Fiverr] Gig '%s' berhasil dibuat dan dipublikasikan.", template.get("title"))
+        return True
 
     def ensure_gig_exists(self) -> bool:
         """
-        Cek jumlah Gig. Jika kurang dari 5, buat Gig baru secara dinamis
-        agar variasi offer terus bertambah sesuai request.
+        Cek jumlah Gig. Jika kurang dari 5, buat Gig baru secara dinamis.
         """
         count = self.check_gig_count()
         if count >= 5:
@@ -354,10 +424,7 @@ class FiverrAgent:
 
     def search_and_offer_gigs(self) -> bool:
         """
-        Di Fiverr, kita tidak apply ke job — kita menunggu order masuk ke Gig.
-        Tapi kita bisa aktif di Fiverr Buyer Request (jika masih tersedia)
-        atau optimasi Gig ranking dengan update deskripsi.
-        Return True jika ada aktivitas yang dilakukan.
+        Aktif di Fiverr Buyer Request atau optimasi Gig ranking.
         """
         result = self.browser.execute_task(
             "Buka https://www.fiverr.com/users/selling/buyer_requests. "
