@@ -131,7 +131,7 @@ class GeminiClient:
             
             # Tambahkan tools jika diminta
             if use_google_search:
-                data["tools"] = [{"google_search_retrieval": {}}]
+                data["tools"] = [{"google_search": {}}]
 
             generation_config = {}
             supports_thinking = self.model_config.get("supports_thinking", False)
