@@ -553,7 +553,7 @@ class BrowserAgent:
             with open(temp_screenshot, "rb") as f:
                 img_data = base64.b64encode(f.read()).decode("utf-8")
 
-            viewport = self.page.viewport_size
+            viewport = self.page.viewport_size or {'width': 1280, 'height': 720}
             prompt = (
                 f"You are a visual web automation assistant. Look at the screenshot. "
                 f"Identify the (x, y) coordinates for: '{target_description}'. "
