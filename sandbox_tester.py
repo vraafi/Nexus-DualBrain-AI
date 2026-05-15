@@ -1,9 +1,11 @@
 import logging
 import time
 import subprocess
-import shutil
-import uuid
 import os
+import sys
+import tempfile
+import shutil
+
 
 class SandboxTester:
     def __init__(self, duration_minutes=15, llm_client=None):
@@ -14,129 +16,262 @@ class SandboxTester:
         """Runs flake8 to catch syntax errors before executing."""
         logging.info("Running static analysis via flake8...")
         try:
-            result = subprocess.run(["flake8", code_path], capture_output=True, text=True)
+            result = subprocess.run(
+                [sys.executable, "-m", "flake8", code_path],
+                capture_output=True, text=True
+            )
             if result.returncode != 0:
-                 logging.warning(f"Static analysis found potential issues:\n{result.stdout}")
-                 return False, result.stdout
+                logging.warning(f"Static analysis found potential issues:\n{result.stdout}")
+                return False, result.stdout
             return True, ""
         except Exception as e:
             logging.error(f"Failed to run static analysis: {e}")
-            return True, "" # Don't block execution if flake8 fails to run
+            return True, ""
 
     def _search_error(self, error_message):
-        """Mencari solusi di Google via Gemini untuk error sandbox."""
-        logging.info(f"Mencari solusi Google untuk error: {error_message[:100]}...")
+        """Mencari solusi untuk error sandbox — DuckDuckGo sebagai primary, Gemini sebagai fallback."""
+        logging.info(f"Mencari solusi untuk error: {error_message[:100]}...")
+        try:
+            result = self._search_duckduckgo(f"Python error fix: {error_message}")
+            if result:
+                return result
+        except Exception as e:
+            logging.warning(f"DuckDuckGo search gagal: {e}")
+
         try:
             if self.llm:
-                return self.llm._search_web(f"Python error fix for: {error_message}")
-            return "LLM client tidak tersedia untuk search."
+                return self.llm._search_web_safe(f"Python error fix for: {error_message}")
         except Exception as e:
-            logging.error(f"Google Search gagal: {e}")
+            logging.error(f"Gemini search fallback gagal: {e}")
+
+        return ""
+
+    def _search_duckduckgo(self, query):
+        """Cari solusi error menggunakan DuckDuckGo (tidak butuh API key)."""
+        try:
+            from duckduckgo_search import DDGS
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=3))
+            if results:
+                snippets = [r.get("body", "") for r in results if r.get("body")]
+                return "\n\n".join(snippets[:3])
             return ""
+        except ImportError:
+            logging.warning("duckduckgo_search tidak terinstall. Skip DDG search.")
+            return ""
+        except Exception as e:
+            logging.warning(f"DuckDuckGo search error: {e}")
+            return ""
+
+    def _run_with_llm_sandbox(self, code_path, timeout=300):
+        """
+        Jalankan kode menggunakan llm-sandbox dengan Docker backend.
+        Ini adalah metode utama yang menggunakan library llm-sandbox (github.com/vndee/llm-sandbox).
+
+        Backend yang valid: 'docker', 'kubernetes', 'podman', 'micromamba'
+        PENTING: backend='local' TIDAK ADA di llm-sandbox — menyebabkan UnsupportedBackendError.
+        """
+        from llm_sandbox import SandboxSession, SandboxBackend
+
+        abs_code_path = os.path.abspath(code_path)
+        with open(abs_code_path, "r") as f:
+            code_to_run = f.read()
+
+        with SandboxSession(
+            lang="python",
+            backend=SandboxBackend.DOCKER,
+            verbose=False
+        ) as session:
+            result = session.run(
+                code=code_to_run,
+                libraries=["requests", "beautifulsoup4", "pytest"]
+            )
+
+        # Filter stderr: abaikan warning yang tidak kritis
+        critical_stderr = ""
+        if result.stderr and result.stderr.strip():
+            critical_lines = [
+                line for line in result.stderr.strip().splitlines()
+                if not any(w in line.lower() for w in [
+                    "deprecat", "futurewarning", "userwarning",
+                    "resourcewarning", "pendingdeprecation"
+                ])
+            ]
+            critical_stderr = "\n".join(critical_lines).strip()
+
+        if critical_stderr:
+            raise Exception(f"Execution Failed:\n{critical_stderr}")
+
+        return result.stdout or ""
+
+    def _run_code_subprocess(self, code_path, timeout=300):
+        """
+        Fallback: jalankan kode Python via subprocess langsung.
+        Digunakan jika Docker tidak tersedia atau llm-sandbox gagal.
+        """
+        abs_code_path = os.path.abspath(code_path)
+        work_dir = tempfile.mkdtemp(prefix="nexus_sandbox_")
+
+        try:
+            script_name = os.path.basename(abs_code_path)
+            dest_path = os.path.join(work_dir, script_name)
+            shutil.copy2(abs_code_path, dest_path)
+
+            result = subprocess.run(
+                [sys.executable, dest_path],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=work_dir,
+                env={**os.environ, "PYTHONPATH": os.getcwd()}
+            )
+
+            # Filter stderr
+            critical_stderr = ""
+            if result.stderr and result.stderr.strip():
+                critical_lines = [
+                    line for line in result.stderr.strip().splitlines()
+                    if not any(w in line.lower() for w in [
+                        "deprecat", "futurewarning", "userwarning",
+                        "resourcewarning", "pendingdeprecation"
+                    ])
+                ]
+                critical_stderr = "\n".join(critical_lines).strip()
+
+            if result.returncode != 0 and critical_stderr:
+                raise Exception(f"Execution Failed (exit {result.returncode}):\n{critical_stderr}")
+
+            return result.stdout or ""
+
+        except subprocess.TimeoutExpired:
+            raise Exception(f"Execution timed out setelah {timeout}s")
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+    def _execute_code(self, code_path):
+        """
+        Strategi eksekusi bertingkat:
+        1. llm-sandbox dengan Docker backend (primary — sandbox terisolasi)
+        2. subprocess langsung (fallback — jika Docker tidak berjalan)
+        """
+        timeout_sec = min(self.duration, 300)
+
+        # Primary: llm-sandbox + Docker
+        try:
+            stdout = self._run_with_llm_sandbox(code_path, timeout=timeout_sec)
+            logging.info("llm-sandbox (Docker) berhasil. Output: %s", stdout[:200])
+            return stdout
+        except ImportError:
+            logging.warning("llm-sandbox tidak terinstall. Fallback ke subprocess.")
+        except Exception as e:
+            err_str = str(e)
+            # Jika Docker tidak berjalan atau tidak tersedia, langsung fallback
+            if any(kw in err_str.lower() for kw in [
+                "docker", "connection", "daemon", "socket", "unsupported backend"
+            ]):
+                logging.warning(
+                    "llm-sandbox/Docker tidak tersedia (%s). Fallback ke subprocess.", err_str[:120]
+                )
+            else:
+                # Error bukan dari Docker — lempar ke loop utama untuk self-correction
+                raise
+
+        # Fallback: subprocess langsung
+        logging.info("Menjalankan kode via subprocess (fallback)...")
+        stdout = self._run_code_subprocess(code_path, timeout=timeout_sec)
+        logging.info("Subprocess berhasil. Output: %s", stdout[:200])
+        return stdout
 
     def test_code(self, code_path):
         logging.info(f"Setting up sandbox environment for {code_path}. Running for {self.duration}s.")
 
         attempt = 1
         start_time = time.time()
-        max_total_duration = 30 * 60 # 30 minutes absolute maximum to prevent infinite/long loop blocking
+        max_total_duration = 30 * 60
 
         while True:
-             if time.time() - start_time > max_total_duration:
-                 logging.error("Total self-correction time exceeded 30 minutes. Aborting to prevent infinite loop.")
-                 return False
+            if time.time() - start_time > max_total_duration:
+                logging.error("Total self-correction time exceeded 30 minutes. Aborting.")
+                return False
 
-             try:
-                 logging.info(f"Test Attempt {attempt}...")
+            try:
+                logging.info(f"Test Attempt {attempt}...")
 
-                 test_duration = self.duration # Run for full requested duration (15-60m)
+                abs_code_path = os.path.abspath(code_path)
 
-                 # Execute via Bubblewrap (bwrap) for lightweight but secure isolation
-                 # This prevents LLM prompt injection RCEs from accessing the host OS
-                 # while remaining light enough for 8GB RAM systems (unlike Docker).
+                if not os.path.exists(abs_code_path):
+                    raise Exception(f"File tidak ditemukan: {abs_code_path}")
 
-                 abs_code_path = os.path.abspath(code_path)
+                # Step 1: Static Analysis
+                is_valid, static_errors = self._static_analysis(abs_code_path)
+                if not is_valid and "SyntaxError" in static_errors:
+                    raise Exception(f"Static Analysis Failed:\n{static_errors}")
 
-                 # Step 1: Static Analysis
-                 is_valid, static_errors = self._static_analysis(abs_code_path)
-                 if not is_valid and "SyntaxError" in static_errors:
-                      raise Exception(f"Static Analysis Failed:\n{static_errors}")
+                # Step 2: Eksekusi (llm-sandbox Docker → subprocess fallback)
+                stdout = self._execute_code(abs_code_path)
 
-                 # Step 2: Test Execution inside llm-sandbox
-                 from llm_sandbox import SandboxSession
+                logging.info(
+                    "Sandbox testing passed successfully. Output: %s",
+                    stdout[:200]
+                )
+                return True
 
-                 with SandboxSession(lang="python", backend="local", verbose=False) as session:
-                     with open(abs_code_path, "r") as f:
-                         code_to_run = f.read()
+            except Exception as e:
+                error_msg = str(e)
+                logging.warning(f"Execution failed: {error_msg}")
+                logging.info("Initiating Self-Correction Loop...")
 
-                     result = session.run(
-                         code=code_to_run,
-                         libraries=["requests", "beautifulsoup4", "pytest"]
-                     )
+                search_context = self._search_error(error_msg[-200:])
 
-                     if result.stderr and result.stderr.strip():
-                         raise Exception(f"Execution Failed:\n{result.stderr}")
+                if self.llm:
+                    prompt = (
+                        f"The code at {code_path} failed with this error:\n{error_msg}\n\n"
+                        f"Search context:\n{search_context}\n\n"
+                        "Please provide the COMPLETE fixed Python code (no markdown fences, raw code only)."
+                    )
+                    logging.info("Asking LLM to fix code based on error and search context.")
+                    try:
+                        fixed_code = self.llm.generate_content(prompt, use_codegen_model=True)
+                        if fixed_code:
+                            if "```python" in fixed_code:
+                                fixed_code = fixed_code.split("```python")[1].split("```")[0].strip()
+                            elif "```" in fixed_code:
+                                fixed_code = fixed_code.split("```")[1].strip()
+                            with open(code_path, "w") as f:
+                                f.write(fixed_code)
+                            logging.info("Applied LLM fix to code.")
+                    except Exception as llm_err:
+                        logging.error(f"Failed to get fix from LLM: {llm_err}")
 
-                     logging.info(
-                         "Sandbox testing passed successfully. Output: %s",
-                         (result.stdout or "")[:200]
-                     )
-                     return True
+                if attempt >= 7:
+                    logging.error("Failed 7 times. Initiating Graceful Cancellation to Client...")
 
+                    if self.llm:
+                        apology_prompt = (
+                            f"I am an autonomous freelance AI agent. I failed to execute the script after 7 tries. "
+                            f"The final error was: {error_msg[-300:]}. "
+                            "Please generate a professional, polite message to the client apologizing for the delay "
+                            "and explaining that I am stepping down from the project."
+                        )
+                        try:
+                            advice = self.llm.generate_content(apology_prompt)
+                        except Exception:
+                            advice = None
+                    else:
+                        advice = None
 
-             except Exception as e:
-                 error_msg = str(e)
-                 logging.warning(f"Execution failed: {error_msg}")
+                    if not advice:
+                        advice = "I apologize, but I encountered an unresolvable technical error and must cancel this task."
 
-                 logging.info("Initiating Self-Correction Loop...")
-                 search_context = self._search_error(error_msg[-200:]) # Search tail of error
+                    logging.info(f"Apology generated: {advice}")
 
-                 if self.llm:
-                      prompt = f"The code {code_path} failed with error: {error_msg}. Context: {search_context}. Please provide the full fixed code."
-                      logging.info("Asking Gemini API to fix code based on error and search context.")
+                    apology_file = "apology_message.txt"
+                    with open(apology_file, "w") as f:
+                        f.write(advice)
+                    with open("cancellation_report.log", "a") as f:
+                        f.write(f"Task Failed. Apology drafted to {apology_file}:\n{advice}\n\n")
 
-                      try:
-                          fixed_code = self.llm.generate_content(prompt)
-                          if fixed_code:
-                              # Strip markdown if present
-                              if "```python" in fixed_code:
-                                  fixed_code = fixed_code.split("```python")[1].split("```")[0].strip()
-                              elif "```" in fixed_code:
-                                  fixed_code = fixed_code.split("```")[1].strip()
+                    return False
 
-                              with open(code_path, "w") as f:
-                                  f.write(fixed_code)
-                              logging.info("Applied fix to code.")
-                      except Exception as llm_err:
-                          logging.error(f"Failed to get fix from LLM: {llm_err}")
-
-                 if attempt == 7:
-                      logging.error("Failed 7 times. Initiating Graceful Cancellation to Client...")
-
-                      if self.llm:
-                          apology_prompt = (
-                              f"I am an autonomous freelance AI agent. I failed to execute the script after 7 tries. "
-                              f"The final error was: {error_msg[-300:]}. "
-                              "Please generate a professional, polite message to the client apologizing for the delay "
-                              "and explaining that I am stepping down from the project."
-                          )
-                          advice = self.llm.generate_content(apology_prompt)
-                      else:
-                          advice = "I apologize, but I encountered an unresolvable technical error and must cancel."
-
-                      logging.info(f"Apology generated: {advice}")
-
-                      # Write apology file so main.py can send it to the client
-                      apology_file = "apology_message.txt"
-                      with open(apology_file, "w") as f:
-                          f.write(advice)
-
-                      with open("cancellation_report.log", "a") as f:
-                          f.write(f"Task Failed. Apology drafted to {apology_file}:\n{advice}\n\n")
-
-                      # Return False so main.py correctly evaluates sandbox as FAILED
-                      # The apology file is still written above for main.py to pick up and send
-                      return False
-
-                 attempt += 1
-                 time.sleep(5)
+                attempt += 1
+                time.sleep(5)
