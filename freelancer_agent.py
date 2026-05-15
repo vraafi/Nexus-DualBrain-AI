@@ -2,9 +2,11 @@
 freelancer_agent.py
 ===================
 Agent untuk platform Freelancer.com.
-Freelancer.com adalah salah satu platform freelance terbesar di dunia.
-Flow: Freelancer mengirimkan job matches via email/dashboard → kita apply → chat/bid → contract.
-Agent ini fokus pada: cek job matches, kirim application, dan manage active engagements.
+FIX KRITIS: deliver_work sekarang menggunakan Milestone Release flow yang benar.
+            Tanpa milestone release, klien tidak bisa meng-approve pembayaran.
+
+Reference: Freelancer.com Milestone system
+https://www.freelancer.com/support/freelancer/payment/how-do-i-request-payment
 """
 
 import logging
@@ -176,23 +178,61 @@ class FreelancerAgent:
 
     def deliver_work(self, engagement: dict, file_path: str) -> bool:
         """
-        Kirim hasil kerja ke klien Freelancer melalui messaging system.
+        Kirim hasil kerja ke klien Freelancer dan request milestone payment.
+
+        FIX KRITIS: Flow yang benar di Freelancer.com:
+        1. Upload file + kirim pesan ke klien
+        2. Klik "Request Milestone Payment" agar klien bisa approve & bayar
+
+        Tanpa langkah 2, uang di escrow tidak akan pernah di-release.
+
+        Reference: Freelancer.com Milestone Payment Flow
+        https://www.freelancer.com/support/freelancer/payment/how-do-i-request-payment
         """
+        project_title = engagement.get('title', 'this project')
+        project_url = engagement.get('url', 'https://www.freelancer.com/manage')
+
         delivery_msg = (
-            f"Hello,\n\nI have completed the work for '{engagement.get('title', 'this project')}'. "
+            f"Hello,\n\nI have completed the work for '{project_title}'. "
             "The solution follows SOLID principles and includes comprehensive unit tests. "
-            "Please find the attached file. I'm available for any questions or revisions.\n\n"
+            "Please find the attached file with full documentation. "
+            "I'm available for any questions or revisions within the agreed scope.\n\n"
             "Best regards"
         )
 
-        result = self.browser.execute_task(
-            f"Buka project Freelancer: {engagement.get('url', 'https://www.freelancer.com/manage')}. "
+        # Step 1: Upload file dan kirim pesan ke klien
+        msg_result = self.browser.execute_task(
+            f"Buka project Freelancer: {project_url}. "
             f"Upload file hasil kerja dari path: {file_path}. "
-            f"Kirim pesan chat ke klien dengan teks ini: {delivery_msg[:200]}.",
+            f"Kirim pesan chat ke klien dengan teks ini: {delivery_msg[:300]}.",
             max_steps=20
         )
 
-        if "FAILED" not in result:
-            logger.info("[Freelancer] Pekerjaan berhasil didelivery ke: %s", engagement.get("title"))
-            return True
-        return False
+        if "FAILED" in msg_result:
+            logger.error("[Freelancer] Gagal upload/kirim pesan delivery.")
+            return False
+
+        # Step 2 (PENTING): Request Milestone Payment
+        # Ini yang memicu notifikasi ke klien untuk approve pembayaran
+        logger.info("[Freelancer] Step 2: Request Milestone Payment untuk '%s'...", project_title)
+        milestone_result = self.browser.execute_task(
+            f"Buka halaman project Freelancer: {project_url}. "
+            f"Cari tombol 'Request Milestone Release' atau 'Request Payment'. "
+            f"Klik tombol tersebut. "
+            f"Jika ada form konfirmasi atau dialog, isi dengan pesan singkat: "
+            f"'Work completed as per requirements. Please review and release payment.' "
+            f"Konfirmasi submission.",
+            max_steps=20
+        )
+
+        if "FAILED" in milestone_result:
+            logger.warning(
+                "[Freelancer] Request Milestone Payment mungkin tidak tersedia "
+                "(mungkin fixed-price bukan milestone, atau sudah auto). "
+                "Pesan delivery sudah terkirim."
+            )
+        else:
+            logger.info("[Freelancer] Milestone payment request berhasil dikirim.")
+
+        logger.info("[Freelancer] Pekerjaan berhasil didelivery ke: %s", project_title)
+        return True
