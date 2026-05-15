@@ -130,6 +130,31 @@ class FiverrAgent:
             logger.error("[Fiverr] Tidak ada credential Fiverr di vault.")
             return False
 
+        # Cek apakah Fiverr sudah login di salah satu tab yang terbuka.
+        # Ini mencegah agent membuka halaman login padahal sesi sudah aktif.
+        LOGIN_KEYWORDS = ("login", "join", "signup", "sign-in", "challenge")
+        LOGGED_IN_PATHS = ("/users/", "/seller_dashboard", "/inbox", "/orders", "/manage_gigs")
+        try:
+            pages = self.browser.context.pages if self.browser.context else []
+            for p in pages:
+                try:
+                    url = p.url.lower()
+                    if "fiverr.com" not in url:
+                        continue
+                    if any(kw in url for kw in LOGIN_KEYWORDS):
+                        continue
+                    if any(path in url for path in LOGGED_IN_PATHS):
+                        logger.info(
+                            "[Fiverr] Sudah terdeteksi login di tab: %s -- skip login sequence.",
+                            p.url,
+                        )
+                        self.browser.page = p
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
         try:
             self.browser.navigate("https://www.fiverr.com/login")
             page = self.browser.page
@@ -288,16 +313,67 @@ class FiverrAgent:
 
     def check_gig_count(self) -> int:
         """
-        Cek jumlah Gig aktif di Fiverr.
+        Cek jumlah Gig AKTIF (bukan draft) di halaman Manage Gigs.
+
+        Tiga strategi deteksi berurutan:
+          1. Hitung badge/label 'Active' yang muncul di setiap baris gig
+          2. Hitung semua baris gig lalu kurangi baris bertanda 'Draft'
+          3. Fallback: kembalikan 0 jika tidak bisa bedakan aktif vs draft
         """
+        from identity_manager import IdentityManager
         try:
+            identity = IdentityManager()
+            creds = identity.get_credential("fiverr")
+            username = (creds or {}).get("username", "")
+            if "@" in username:
+                username = username.split("@")[0]
+
+            manage_url = (
+                f"https://www.fiverr.com/users/{username}/manage_gigs"
+                if username else "https://www.fiverr.com/seller_dashboard"
+            )
+            logger.info("[Fiverr] Navigasi ke halaman manage gigs: %s", manage_url)
+            self.browser.navigate(manage_url)
             page = self.browser.page
-            self.browser.navigate("https://www.fiverr.com/seller_dashboard/gigs")
-            page.wait_for_timeout(4000)
-            gig_items = page.locator("li[class*='gig'], tr[class*='gig'], div[class*='gig-wrapper']").all()
-            count = len(gig_items)
-            logger.info("[Fiverr] Ditemukan %d Gig aktif.", count)
-            return count
+            page.wait_for_timeout(5000)
+
+            # Strategi 1: hitung badge 'Active' secara eksplisit
+            # Fiverr menampilkan status Active/Paused/Draft di setiap baris gig.
+            active_badges = page.locator(
+                "span:has-text('Active'), "
+                "div[class*='status']:has-text('Active'), "
+                "td[class*='status']:has-text('Active'), "
+                "span[class*='badge']:has-text('Active')"
+            ).all()
+            active_count = len([el for el in active_badges if el.is_visible()])
+            if active_count > 0:
+                logger.info("[Fiverr] Ditemukan %d Gig aktif (via badge status).", active_count)
+                return active_count
+
+            # Strategi 2: semua baris gig dikurangi baris Draft
+            all_gig_rows = page.locator(
+                "tr[data-gig-id], div[data-gig-id], "
+                "article[class*='gig-card'], div[class*='gig-item']"
+            ).all()
+            draft_rows = page.locator(
+                "tr[data-gig-id]:has-text('Draft'), "
+                "div[data-gig-id]:has-text('Draft'), "
+                "article[class*='gig-card']:has-text('Draft'), "
+                "div[class*='gig-item']:has-text('Draft')"
+            ).all()
+            if all_gig_rows:
+                active_count = max(0, len(all_gig_rows) - len(draft_rows))
+                logger.info(
+                    "[Fiverr] Total baris gig: %d | Draft: %d | Aktif: %d",
+                    len(all_gig_rows), len(draft_rows), active_count
+                )
+                return active_count
+
+            # Strategi 3: tidak bisa bedakan aktif vs draft -- kembalikan 0
+            # supaya agent mencoba membuat gig baru daripada berhenti salah.
+            logger.info("[Fiverr] Tidak ada baris gig terdeteksi di halaman manage_gigs.")
+            return 0
+
         except Exception as exc:
             logger.warning("[Fiverr] Gagal cek jumlah gig: %s", exc)
             return 0
