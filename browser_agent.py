@@ -10,6 +10,11 @@ Dual-mode browser agent:
   MODE 2 (stealth): Camoufox — Firefox fork dengan fingerprint spoofing di level C++.
     → Set .env: USE_CAMOUFOX=true
     → Tidak butuh Brave. Agent buka/tutup browser sendiri.
+
+  MODE 3 (auto-launch fallback): Playwright Chromium diluncurkan otomatis.
+    → Aktif secara otomatis jika Brave CDP gagal dan Camoufox tidak di-set.
+    → Agent buka browser sendiri tanpa bantuan user (seperti Antigravity).
+    → Set BROWSER_HEADLESS=true di .env untuk mode tanpa tampilan.
     → Fingerprint (User-Agent, OS, timezone, canvas, WebGL, fonts) dispoof di
       level implementasi C++, bukan JavaScript injection — tidak terdeteksi.
     → ~200MB vs Chrome 800MB+. Cocok untuk server/VPS.
@@ -246,11 +251,51 @@ class BrowserAgent:
                 pass
             return False
 
+    def _init_playwright_chromium(self):
+        """
+        MODE 3: Auto-launch Playwright Chromium.
+        Digunakan sebagai fallback otomatis ketika Brave CDP tidak tersedia.
+        Agent meluncurkan browsernya sendiri -- tidak perlu bantuan user.
+        """
+        headless = os.environ.get("BROWSER_HEADLESS", "false").strip().lower() in ("1", "true", "yes")
+        self.logger.info(
+            "[BrowserAgent] MODE 3: Auto-launch Playwright Chromium (headless=%s)...", headless
+        )
+        pw = sync_playwright().start()
+        browser = pw.chromium.launch(
+            headless=headless,
+            args=[
+                "--no-sandbox",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                "--start-maximized",
+            ]
+        )
+        self.playwright = pw
+        self.browser = browser
+        self.context = browser.new_context(
+            viewport={"width": 1280, "height": 900},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+        )
+        self.page = self.context.new_page()
+        self.page.set_default_timeout(60000)
+        if GHOST_CURSOR_AVAILABLE:
+            try:
+                self.cursor = create_cursor(self.page)
+            except Exception:
+                self.cursor = None
+        else:
+            self.cursor = None
+        self.logger.info("[BrowserAgent] Playwright Chromium aktif. Siap digunakan.")
+
     def _init_brave_cdp(self):
         candidates = _get_cdp_candidates(self._base_url)
         self.logger.info("Urutan endpoint yang akan dicoba: %s", candidates)
-        self.logger.info("Pastikan Brave sudah berjalan dengan:")
-        self.logger.info("  cmd /c start brave --remote-debugging-port=9222")
+        self.logger.info("Mencoba konek ke Brave (jika berjalan)...")
 
         connected = False
         for url in candidates:
@@ -259,34 +304,12 @@ class BrowserAgent:
                 break
 
         if not connected:
-            raise RuntimeError(
-                f"Gagal konek ke Brave di semua endpoint: {candidates}\
-\
-"
-                f"Solusi:\
-"
-                f"  1. Tutup semua proses Brave (Task Manager).\
-"
-                f"  2. Buka CMD Windows:\
-"
-                f"       cmd /c start brave --remote-debugging-port=9222\
-"
-                f"  3. Tunggu Brave terbuka sempurna (ada minimal 1 tab).\
-"
-                f"  4. Jalankan agent lagi.\
-\
-"
-                f"  Jika tetap gagal, tambahkan di .env:\
-"
-                f"       BRAVE_CDP_URL=http://localhost:9222\
-\
-"
-                f"  Atau aktifkan Camoufox:\
-"
-                f"       USE_CAMOUFOX=true\
-"
-                f"       pip install camoufox==0.4.11 && python -m camoufox fetch"
+            self.logger.warning(
+                "[BrowserAgent] Brave tidak terdeteksi di %s. "
+                "Auto-launching Playwright Chromium sebagai fallback...", candidates
             )
+            self._init_playwright_chromium()
+            return
 
         self.context = self.browser.contexts[0]
 
