@@ -16,6 +16,7 @@ import re
 import random
 from browser_agent import BrowserAgent
 from identity_manager import IdentityManager
+from difficulty_classifier import DifficultyClassifier
 
 
 class FreelanceAgent:
@@ -137,23 +138,55 @@ class FreelanceAgent:
 
     def filter_jobs_batch(self, jobs_list: list) -> list:
         """
-        Batch evaluate jobs using LLM. Fallback ke keyword filter jika LLM gagal.
+        Pipeline filter 3 lapisan sebelum agent melamar:
 
-        FIX KRITIS: Sebelumnya jika LLM gagal parse, return [] — agent stuck tanpa melamar.
-        Sekarang: LLM gagal → keyword fallback → jika tetap kosong → kembalikan semua job.
+        LAPISAN 1 — DifficultyClassifier (SEBELUM LLM dipanggil)
+          Buang SEMUA job SULIT. Hanya MUDAH dan SEDANG yang lolos.
+          Skor 1-3 = MUDAH ✅  |  4-6 = SEDANG ✅  |  7+ = SULIT 🚫
+          Metodologi: radon (github.com/rubik/radon, 1.5k stars),
+                      Cognitive Complexity (SonarSource),
+                      wily (github.com/tonybaloney/wily, 1.2k stars)
+
+        LAPISAN 2 — LLM Filter
+          Cek apakah job bisa dikerjakan 100% otomatis oleh AI.
+
+        LAPISAN 3 — Keyword Fallback
+          Jika LLM gagal parse JSON, gunakan keyword heuristic.
+          TIDAK PERNAH return [] — agent tidak boleh stuck.
         """
         self.logger.info("Batch filtering %d jobs...", len(jobs_list))
 
         if not jobs_list:
             return []
 
-        # ── LANGKAH 1: Prompt yang SANGAT EKSPLISIT tentang format JSON ──────
-        # Gemma model sering mengabaikan "Respond ONLY with JSON".
-        # Solusi: taruh format JSON di AWAL prompt, gunakan kata yang tegas.
+        # ══════════════════════════════════════════════════════════════
+        # LAPISAN 1: DIFFICULTY CLASSIFIER — Buang SULIT sebelum LLM
+        # ══════════════════════════════════════════════════════════════
+        classifier = DifficultyClassifier()
+        difficulty_passed, diff_stats = classifier.filter_allowed(jobs_list)
+
+        if diff_stats["SULIT"] > 0:
+            self.logger.warning(
+                "[Filter] 🚫 %d job SULIT dibuang | MUDAH=%d SEDANG=%d lolos ke LLM filter",
+                diff_stats["SULIT"], diff_stats["MUDAH"], diff_stats["SEDANG"]
+            )
+
+        if not difficulty_passed:
+            self.logger.warning(
+                "[Filter] Semua %d job diklasifikasi SULIT — tidak ada yang akan dilamar.",
+                len(jobs_list)
+            )
+            return []
+
+        # ══════════════════════════════════════════════════════════════
+        # LAPISAN 2: LLM FILTER — hanya untuk job yang sudah lolos difficulty
+        # Bekerja pada difficulty_passed, BUKAN jobs_list asli
+        # ══════════════════════════════════════════════════════════════
         job_lines = ""
-        for i, job in enumerate(jobs_list):
+        for i, job in enumerate(difficulty_passed):
+            level = job.get("_difficulty", {}).get("level", "?")
             job_lines += (
-                f"\nINDEX {i}: {job.get('title', 'Unknown')}\n"
+                f"\nINDEX {i} [{level}]: {job.get('title', 'Unknown')}\n"
                 f"DESC: {job.get('description', '')[:250]}\n"
             )
 
@@ -168,11 +201,9 @@ class FreelanceAgent:
             f"JOBS:{job_lines}"
         )
 
-        # ── LANGKAH 2: Panggil LLM (tanpa require_json karena gemma tidak support) ──
-        # require_json=False karena gemma tidak support responseMimeType
         response = self.llm.generate_content(prompt, use_negotiation_model=True)
 
-        # ── LANGKAH 3: Parse respons dengan fallback bertingkat ───────────────
+        # ── Parse respons LLM dengan fallback bertingkat ─────────────────────
         if response:
             try:
                 evaluations = self._extract_json_from_response(response)
@@ -181,29 +212,34 @@ class FreelanceAgent:
                     idx = eval_obj.get("index")
                     is_ok = eval_obj.get("ok", eval_obj.get("is_autonomous",
                             eval_obj.get("autonomous", True)))
-                    if is_ok and idx is not None and 0 <= int(idx) < len(jobs_list):
-                        approved_jobs.append(jobs_list[int(idx)])
-                        self.logger.info("[LLMFilter] Disetujui: %s", jobs_list[int(idx)].get('title'))
+                    if is_ok and idx is not None and 0 <= int(idx) < len(difficulty_passed):
+                        approved_jobs.append(difficulty_passed[int(idx)])
+                        self.logger.info(
+                            "[LLMFilter] ✅ Disetujui [%s]: %s",
+                            difficulty_passed[int(idx)].get("_difficulty", {}).get("level", "?"),
+                            difficulty_passed[int(idx)].get('title')
+                        )
 
                 if approved_jobs:
                     return approved_jobs
 
-                self.logger.warning("[LLMFilter] LLM tidak menyetujui satu job pun — cek respons.")
+                self.logger.warning("[LLMFilter] LLM tidak menyetujui satu job pun — fallback.")
 
             except Exception as e:
                 self.logger.error(
-                    "[LLMFilter] Gagal parse JSON (fallback ke keyword filter): %s | Raw: %s",
+                    "[LLMFilter] Gagal parse JSON → fallback keyword: %s | Raw: %s",
                     e, response[:300]
                 )
         else:
-            self.logger.warning("[LLMFilter] LLM tidak menghasilkan respons.")
+            self.logger.warning("[LLMFilter] LLM tidak merespons — fallback keyword.")
 
-        # ── LANGKAH 4: FALLBACK — keyword filter ─────────────────────────────
-        # Jika LLM gagal total, gunakan heuristik keyword.
-        # Jauh lebih baik melamar job yang belum tentu cocok
-        # daripada tidak melamar satupun selama berjam-jam.
-        self.logger.warning("[LLMFilter] Menggunakan keyword fallback untuk menghindari stuck.")
-        return self._keyword_filter(jobs_list)
+        # ══════════════════════════════════════════════════════════════
+        # LAPISAN 3: KEYWORD FALLBACK — dari difficulty_passed, bukan jobs_list asli
+        # Agent TIDAK BOLEH stuck — selalu ada job untuk dilamar
+        # ══════════════════════════════════════════════════════════════
+        self.logger.warning("[Filter] Menggunakan keyword fallback pada %d job lolos difficulty.",
+                            len(difficulty_passed))
+        return self._keyword_filter(difficulty_passed)
 
     def submit_proposal(self, job_data: dict, branding_context: dict = None, script_path: str = None) -> bool:
         self.logger.info("Submitting proposal for: %s", job_data.get('title'))
