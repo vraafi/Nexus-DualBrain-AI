@@ -19,9 +19,28 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 # Browser-Use imports
 # Referensi: https://github.com/browser-use/browser-use (60k+ stars)
 from browser_use import Agent, Browser, BrowserProfile
+from pydantic import Field, SecretStr
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 logger = logging.getLogger(__name__)
+
+
+# Fix: browser-use mengakses llm.provider yang tidak ada di Pydantic v2 ChatGoogleGenerativeAI.
+# Solusi ini dipakai ribuan pengguna di GitHub (issue #3534, #447, #2134, #2345).
+# Referensi: https://github.com/browser-use/browser-use/issues/3534
+class GeminiForBrowserUse(ChatGoogleGenerativeAI):
+    """
+    Subclass ChatGoogleGenerativeAI yang menambahkan atribut 'provider'
+    sebagai Pydantic field agar kompatibel dengan browser-use.
+    model_config extra='allow' diperlukan agar browser-use bisa set
+    atribut tambahan seperti 'ainvoke' pada runtime.
+    """
+    provider: str = Field(default="google")
+    model_config = {"extra": "allow"}
+
+    @property
+    def model_name(self) -> str:
+        return self.model
 
 
 class BrowserAgent:
@@ -46,10 +65,12 @@ class BrowserAgent:
         self.logger = logging.getLogger(__name__)
 
         # Setup LLM untuk Browser-Use (Gemini)
+        # Menggunakan GeminiForBrowserUse (subclass) agar atribut 'provider'
+        # tersedia dan tidak menyebabkan AttributeError di browser-use.
         gemini_key = os.environ.get("GEMINI_KEY_1", "")
-        self._bu_llm = ChatGoogleGenerativeAI(
+        self._bu_llm = GeminiForBrowserUse(
             model="gemini-2.0-flash",
-            google_api_key=gemini_key,
+            api_key=SecretStr(gemini_key) if gemini_key else None,
             temperature=0.1,
         )
 
