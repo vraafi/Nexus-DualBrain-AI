@@ -1,0 +1,60 @@
+(venv) user001@DESKTOP-BKR2PJ9:~/Nexus-DualBrain-AI$ git pull
+git add browser_agent.py
+git commit -m "fix: serialize browser tasks with global lock + singleton browser"
+git push
+Already up to date.
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+        agent_activity.log
+        agent_state.db
+        apology_message.txt
+        benchmark_completed.txt
+        benchmark_easy.py
+        benchmark_easy_aider.py
+        benchmark_easy_antigravity.py
+        benchmark_hard.py
+        benchmark_hard_aider.py
+        benchmark_hard_antigravity.py
+        benchmark_hello.py
+        benchmark_hello_aider.py
+        benchmark_hello_antigravity.py
+        benchmark_medium.py
+        benchmark_medium_aider.py
+        benchmark_medium_antigravity.py
+        cancellation_report.log
+        captcha_challenge.png
+        error_patterns.db
+        nexus_agents (1).py
+        nexus_agents.py
+        nexus_main.py
+        temp_sim-easy-aider-custom-automation-and-web-1778858545/
+        temp_sim-easy-antigravity-custom-automation-and-web-1778858545/
+        temp_sim-easy-custom-automation-and-web-scra-1778787023/
+        temp_sim-easy-custom-automation-and-web-scra-1778848317/
+        temp_sim-easy-custom-automation-and-web-scra-1778852338/
+        temp_sim-hard-aider-global-scale-distributed--1778864026/
+        temp_sim-hard-antigravity-global-scale-distributed--1778864026/
+        temp_sim-hard-global-scale-distributed-syste-1778787279/
+        temp_sim-hard-global-scale-distributed-syste-1778852772/
+        temp_sim-hello-aider-antigravity-communication-1778857087/
+        temp_sim-hello-antigravity-antigravity-communication-1778856658/
+        temp_sim-hello-antigravity-antigravity-communication-1778857087/
+        temp_sim-hello-antigravity-communication-test-1778786372/
+        temp_sim-hello-antigravity-communication-test-1778786951/
+        temp_sim-hello-antigravity-communication-test-1778847725/
+        temp_sim-hello-antigravity-communication-test-1778848609/
+        temp_sim-hello-antigravity-communication-test-1778851864/
+        temp_sim-hello-antigravity-communication-test-1778852298/
+        temp_sim-medium-aider-cloud-architecture---micr-1778861212/
+        temp_sim-medium-antigravity-cloud-architecture---micr-1778861212/
+        temp_sim-medium-cloud-architecture---microserv-1778787102/
+        temp_sim-medium-cloud-architecture---microserv-1778852575/
+        toptal_agent.py
+        visual_fallback.jpg
+
+nothing added to commit but untracked files present (use "git add" to track)
+Everything up-to-date
+(venv) user001@DESKTOP-BKR2PJ9:~/Nexus-DualBrain-AI$
