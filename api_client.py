@@ -1,6 +1,7 @@
 """
 api_client.py — Client untuk Gemini/Gemma API dengan multi-key rotation & exponential backoff
 Update: Support model hierarki 3-tier (31b → 26b → flash-lite) + NEGOTIATION_MODEL
+Fix: Google Search 500 error → DuckDuckGo sebagai primary search, Gemini tanpa tool sebagai fallback
 """
 
 import requests
@@ -36,21 +37,70 @@ class GeminiClient:
         self.base_url = self.model_config["base_url"]
         logging.info(f"Model diganti ke: {model_name}")
 
-    def _search_web(self, query):
-        """Web search menggunakan Google Search via Gemini."""
-        logging.info(f"Google Search: '{query}'")
+    def _search_duckduckgo(self, query):
+        """
+        Web search menggunakan DuckDuckGo — tidak butuh API key, tidak ada 500 error.
+        Primary search method.
+        """
+        logging.info(f"DuckDuckGo Search: '{query}'")
         try:
-            # Gunakan model yang mendukung Google Search (biasanya Flash model)
-            prompt = (
-                f"Lakukan pencarian Google untuk query ini: '{query}'.\n"
-                "Berikan ringkasan informasi terbaru yang paling relevan untuk membantu menyelesaikan tugas coding."
-            )
-            # Kita panggil _make_api_call dengan parameter google_search=True
-            result = self._make_api_call(prompt, use_google_search=True)
-            return result if result else "Pencarian tidak membuahkan hasil."
+            from duckduckgo_search import DDGS
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=5))
+            if results:
+                snippets = [
+                    f"[{r.get('title', '')}]\n{r.get('body', '')}"
+                    for r in results if r.get("body")
+                ]
+                return "\n\n".join(snippets[:5])
+            return "Tidak ada hasil ditemukan."
+        except ImportError:
+            logging.warning("duckduckgo_search tidak terinstall. Jalankan: pip install duckduckgo-search")
+            return ""
         except Exception as e:
-            logging.error(f"Google Search gagal: {e}")
+            logging.warning(f"DuckDuckGo search gagal: {e}")
+            return ""
+
+    def _search_web_safe(self, query):
+        """
+        Fallback search via Gemini tanpa google_search tool.
+        Menghindari 500 Internal Server Error dari Gemini google_search tool.
+        """
+        logging.info(f"Gemini Safe Search (no tool): '{query}'")
+        try:
+            prompt = (
+                f"Berikan penjelasan dan solusi untuk query berikut berdasarkan pengetahuanmu:\n"
+                f"'{query}'\n\n"
+                "Fokus pada informasi yang relevan untuk debugging dan perbaikan kode Python."
+            )
+            # Panggil tanpa use_google_search=True untuk menghindari 500 error
+            result = self._make_api_call(prompt, use_google_search=False)
+            return result if result else "Tidak ada hasil."
+        except Exception as e:
+            logging.error(f"Gemini safe search gagal: {e}")
             return "Tidak ada hasil search."
+
+    def _search_web(self, query):
+        """
+        Web search dengan strategi bertingkat:
+        1. DuckDuckGo (primary — bebas API key, tidak ada 500 error)
+        2. Gemini tanpa google_search tool (fallback — hindari 500 error)
+        3. Return kosong jika semua gagal
+        """
+        logging.info(f"Web Search: '{query}'")
+
+        # Primary: DuckDuckGo
+        result = self._search_duckduckgo(query)
+        if result:
+            return result
+
+        # Fallback: Gemini tanpa tool
+        logging.info("DuckDuckGo tidak ada hasil. Fallback ke Gemini safe search...")
+        result = self._search_web_safe(query)
+        if result:
+            return result
+
+        return "Pencarian tidak membuahkan hasil."
 
     def generate_content(self, prompt, context="", require_json=False,
                          allow_search=False, use_codegen_model=False,
@@ -60,7 +110,7 @@ class GeminiClient:
         - use_codegen_model=True      → pakai gemma-4-31b-it (terkuat, untuk code)
         - use_negotiation_model=True  → pakai gemma-4-26b-a4b-it (menengah, untuk negosiasi)
         - default                     → gemini-3.1-flash-lite-preview (hemat, high-frequency)
-        - allow_search=True           → LLM bisa request web search otomatis
+        - allow_search=True           → LLM bisa request web search otomatis (via DuckDuckGo)
         - image_base64                → Kirim gambar ke Gemini (Vision)
         """
         original_model = self.model_name
@@ -76,11 +126,12 @@ class GeminiClient:
             search_prompt = (
                 f"Task:\n{prompt}\n\n"
                 "Apakah kamu perlu mencari dokumentasi web terbaru untuk menyelesaikan ini? "
-                "Jika YA, balas HANYA dengan query pencarian. Jika TIDAK, balas dengan tepat 'NO_SEARCH'."
+                "Jika YA, balas HANYA dengan query pencarian singkat (maks 100 karakter). "
+                "Jika TIDAK, balas dengan tepat 'NO_SEARCH'."
             )
             search_decision = self._make_api_call(search_prompt, require_json=False, use_thinking=False)
 
-            if search_decision and "NO_SEARCH" not in search_decision and len(search_decision) < 150:
+            if search_decision and "NO_SEARCH" not in search_decision and len(search_decision.strip()) < 150:
                 web_context = self._search_web(search_decision.strip())
                 context = f"{context}\n\nWeb Search Results:\n{web_context}"
 
@@ -109,8 +160,13 @@ class GeminiClient:
 
         return result
 
-    def _make_api_call(self, full_prompt, require_json=False, use_thinking=True, image_base64=None, use_google_search=False):
-        """HTTP call ke Gemini/Gemma API dengan exponential backoff dan key rotation."""
+    def _make_api_call(self, full_prompt, require_json=False, use_thinking=True,
+                       image_base64=None, use_google_search=False):
+        """
+        HTTP call ke Gemini/Gemma API dengan exponential backoff dan key rotation.
+        CATATAN: use_google_search=True menyebabkan 500 error pada model Gemma.
+        Gunakan _search_web() atau _search_duckduckgo() sebagai gantinya.
+        """
         max_retries = self.model_config["max_retries"]
 
         for attempt in range(max_retries):
@@ -128,10 +184,18 @@ class GeminiClient:
                 })
 
             data = {"contents": [{"role": "user", "parts": parts}]}
-            
-            # Tambahkan tools jika diminta
-            if use_google_search:
+
+            # PENTING: google_search tool hanya didukung model Gemini Flash/Pro tertentu.
+            # Pada model Gemma (31b, 26b) ini menyebabkan 500 Internal Server Error.
+            # Nonaktifkan secara default — gunakan DuckDuckGo sebagai gantinya.
+            supports_google_search = self.model_config.get("supports_google_search", False)
+            if use_google_search and supports_google_search:
                 data["tools"] = [{"google_search": {}}]
+            elif use_google_search and not supports_google_search:
+                logging.warning(
+                    f"Model {self.model_name} tidak mendukung google_search tool. "
+                    "Melewati tool injection untuk menghindari 500 error."
+                )
 
             generation_config = {}
             supports_thinking = self.model_config.get("supports_thinking", False)
@@ -152,9 +216,9 @@ class GeminiClient:
                 if response.status_code == 200:
                     candidates = response.json().get("candidates", [])
                     if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        if parts:
-                            return parts[0].get("text", "")
+                        resp_parts = candidates[0].get("content", {}).get("parts", [])
+                        if resp_parts:
+                            return resp_parts[0].get("text", "")
                     logging.warning("Respons kosong dari API.")
                     return None
 
@@ -166,7 +230,18 @@ class GeminiClient:
 
                 elif response.status_code in (500, 502, 503, 504):
                     delay = min(5 * (2 ** attempt), 120)
-                    logging.warning(f"Server error {response.status_code}: {response.text[:300]}. Retry dalam {delay}s...")
+                    logging.warning(
+                        f"Server error {response.status_code}: {response.text[:300]}. "
+                        f"Retry dalam {delay}s..."
+                    )
+                    # Jika 500 dan ada google_search tool aktif, nonaktifkan dan coba lagi
+                    if response.status_code == 500 and "tools" in data:
+                        logging.warning(
+                            "Kemungkinan 500 disebabkan google_search tool. "
+                            "Menonaktifkan tool dan retry tanpa delay..."
+                        )
+                        data.pop("tools", None)
+                        continue
                     time.sleep(delay)
 
                 elif response.status_code == 400:
