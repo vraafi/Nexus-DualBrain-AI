@@ -400,6 +400,19 @@ class BrowserAgent:
                 if not self.page or self.page.is_closed():
                     break
 
+                # ── PRIORITAS UTAMA: scan SEMUA tab untuk sesi Upwork yang sudah login ──
+                # Ini menangani kasus di mana user login di tab yang berbeda dari
+                # tab yang dibuka agent (self.page tetap di URL login sementara tab
+                # lain sudah berhasil masuk ke dashboard).
+                logged_in_tab = self._find_logged_in_upwork_tab()
+                if logged_in_tab is not None:
+                    self.logger.info(
+                        "[AI DETECTED] ✅ Sesi Upwork aktif ditemukan di tab lain: %s",
+                        logged_in_tab.url,
+                    )
+                    self.page = logged_in_tab
+                    break
+
                 # Tunggu page selesai transisi
                 try:
                     self.page.wait_for_load_state("domcontentloaded", timeout=1500)
@@ -435,7 +448,7 @@ class BrowserAgent:
                     except Exception:
                         pass
 
-                # Layer 3: Cek elemen yang hanya muncul saat sudah login
+                # Layer 3: Cek elemen yang hanya muncul saat sudah login di tab aktif
                 try:
                     logged_in_selectors = [
                         "[data-test='nav-user-menu']",
@@ -473,6 +486,69 @@ class BrowserAgent:
 
         self.logger.info("[AI RESUMED] ✅ Agent kembali mengambil alih!")
         self.set_agent_state("WORKING")
+
+    def _find_logged_in_upwork_tab(self):
+        """
+        Scan semua tab yang terbuka di browser untuk mencari sesi Upwork yang sudah login.
+        Mengembalikan page object jika ditemukan, atau None jika tidak ada.
+
+        Deteksi dua lapis:
+          1. URL mengandung 'upwork.com', tidak mengandung keyword login,
+             dan mengandung path post-login (/nx/, /ab/find-work/, dll.)
+          2. Fallback: cek elemen DOM yang hanya muncul saat sudah login
+        """
+        LOGIN_KEYWORDS = (
+            "login", "challenge", "signup", "sign-in", "authenticate",
+            "two-factor", "verification", "captcha", "security-check",
+            "account-security",
+        )
+        LOGGED_IN_PATHS = (
+            "/nx/", "/ab/find-work/", "/freelancers/", "/agencies/",
+            "/dashboard", "/my-jobs", "/messages",
+        )
+        LOGGED_IN_SELECTORS = [
+            "[data-test='nav-user-menu']",
+            ".up-avatar",
+            "nav[aria-label='main']",
+            "[data-ev-label='profile_photo']",
+            ".o-profile-nav",
+            "[data-qa='nav-dashboard']",
+            "header .nav-user",
+            ".fe-profile-completeness",
+        ]
+
+        try:
+            pages = self.context.pages if self.context else []
+        except Exception:
+            return None
+
+        for p in pages:
+            try:
+                url = p.url.lower()
+                if "upwork.com" not in url:
+                    continue
+                if any(kw in url for kw in LOGIN_KEYWORDS):
+                    continue
+                # Layer 1: path post-login dikenali di URL
+                if any(path in url for path in LOGGED_IN_PATHS):
+                    self.logger.info(
+                        "[TabScan] ✅ Tab Upwork sudah login ditemukan via URL: %s", p.url
+                    )
+                    return p
+                # Layer 2: elemen DOM dashboard ditemukan di tab ini
+                for sel in LOGGED_IN_SELECTORS:
+                    try:
+                        if p.locator(sel).count() > 0:
+                            self.logger.info(
+                                "[TabScan] ✅ Tab Upwork sudah login ditemukan via DOM (%s): %s",
+                                sel, p.url,
+                            )
+                            return p
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+        return None
 
     def _is_connected(self) -> bool:
         try:
