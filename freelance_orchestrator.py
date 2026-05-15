@@ -2,6 +2,8 @@
 freelance_orchestrator.py
 =========================
 Koordinator utama untuk 3 platform freelance: Upwork, Fiverr, Freelancer.
+FIX KRITIS: Thread _search_jobs tidak lagi mencoba context.new_page() (context=None di Browser-Use mode).
+            Setiap thread membuat BrowserAgent independen yang dikelola Browser-Use.
 
 Logika:
   - Rotasi platform: Upwork (7 jam) → Fiverr (6 jam) → Freelancer (5 jam)
@@ -10,9 +12,6 @@ Logika:
     dan tangani pesanan terlebih dahulu, lalu lanjut sisa slot
   - Jadwal istirahat: 11:00-17:00 WIB (dini hari Amerika, klien sedang tidur)
   - Waktu aktif: 17:00 WIB - 11:00 WIB (09:00-23:00 ET, klien Amerika aktif)
-
-FIX: Syntax error di _process_order() — elif yang salah posisi diperbaiki.
-FIX: _login_platform() dipindahkan ke tempat yang benar.
 """
 
 import time
@@ -60,11 +59,11 @@ def wait_until_active():
         wake = now.replace(hour=17, minute=0, second=0, microsecond=0)
         sleep_sec = (wake - now).total_seconds()
         logger.info(
-            "[Scheduler] 😴 Jam istirahat (%02d:%02d WIB). Tidur %.1f jam hingga 17:00 WIB.",
+            "[Scheduler] Jam istirahat (%02d:%02d WIB). Tidur %.1f jam hingga 17:00 WIB.",
             now.hour, now.minute, sleep_sec / 3600
         )
-        time.sleep(min(sleep_sec, 3600))  # Cek setiap jam
-    logger.info("[Scheduler] ☀️ Waktu aktif dimulai.")
+        time.sleep(min(sleep_sec, 3600))
+    logger.info("[Scheduler] Waktu aktif dimulai.")
 
 
 class FreelanceOrchestrator:
@@ -93,11 +92,12 @@ class FreelanceOrchestrator:
         }
 
         # Error Learning System
+        # Referensi: pattern ini dipakai di banyak production agent
         self.error_learner = ErrorLearningSystem()
 
     def start(self):
         self.email_monitor.start()
-        logger.info("[Orchestrator] 🚀 Freelance Agent aktif. (Upwork: 01-11, Rest: 11-17, Fiverr: 17-01 WIB)")
+        logger.info("[Orchestrator] Freelance Agent aktif. (Upwork: 01-11, Rest: 11-17, Fiverr: 17-01 WIB)")
 
         try:
             while True:
@@ -133,11 +133,10 @@ class FreelanceOrchestrator:
             logger.warning("[Orchestrator] Error login %s: %s", platform, exc)
 
     def _run_platform_slot(self, platform: str):
-        # Jalankan loop selagi masih di jam milik platform ini
         interrupt_event = threading.Event()
 
         logger.info(
-            "[Orchestrator] 🔄 Platform aktif: %s | Mulai: %s WIB",
+            "[Orchestrator] Platform aktif: %s | Mulai: %s WIB",
             platform.upper(), datetime.now(WIB).strftime("%H:%M")
         )
 
@@ -154,7 +153,6 @@ class FreelanceOrchestrator:
                     search_thread.join(timeout=30)
                     return job_data
 
-                # Resume pencarian setelah pesanan diproses, asalkan jam belum berubah
                 if get_current_platform() == platform:
                     logger.info("[Orchestrator] Resume platform %s.", platform.upper())
                     interrupt_event.clear()
@@ -162,7 +160,7 @@ class FreelanceOrchestrator:
 
         interrupt_event.set()
         search_thread.join(timeout=30)
-        logger.info("[Orchestrator] ✅ Slot %s selesai (ganti shift).", platform.upper())
+        logger.info("[Orchestrator] Slot %s selesai (ganti shift).", platform.upper())
         return None
 
     def _start_search_thread(self, platform: str, interrupt_event: threading.Event) -> threading.Thread:
@@ -176,11 +174,16 @@ class FreelanceOrchestrator:
         return t
 
     def _search_jobs(self, platform: str, stop: threading.Event):
-        """Aktif cari dan apply job selama jam shift berlangsung.
+        """
+        Aktif cari dan apply job selama jam shift berlangsung.
 
-        PENTING: Playwright sync API terikat ke thread yang membuatnya.
-        Thread ini membuat koneksi CDP-nya sendiri agar tidak crash
-        dengan error 'cannot switch to a different thread'.
+        FIX KRITIS: Browser-Use mengelola browser lifecycle-nya sendiri.
+        Tidak perlu (dan tidak boleh) memanggil context.new_page() karena
+        self.context = None di BrowserAgent mode Browser-Use.
+        Setiap thread cukup membuat BrowserAgent baru — Browser-Use
+        akan spawn browser session independen.
+
+        Reference: https://github.com/browser-use/browser-use#multi-agent
         """
         import random
         from browser_agent import BrowserAgent
@@ -191,22 +194,14 @@ class FreelanceOrchestrator:
         applied = 0
         branding = self.branding.get(platform, {})
 
-        # Buat koneksi browser baru khusus untuk thread ini
-        thread_browser = BrowserAgent(endpoint_url=self.browser._base_url, llm_client=self.llm)
-        try:
-            thread_browser._init_browser()
-            # Buka tab BARU agar tidak bentrok dengan MainThread yang pakai pages[0]
-            # Dua koneksi CDP ke tab yang sama akan saling blok dan browser diam
-            thread_browser.page = thread_browser.context.new_page()
-            thread_browser.page.set_default_timeout(60000)
-            logger.info("[Search-%s] Tab baru dibuka untuk thread ini.", platform)
-        except Exception as e:
-            logger.error("[Search-%s] Gagal init browser di thread: %s", platform, e)
-            return
-
+        # FIX: Buat BrowserAgent baru per thread — Browser-Use yang manage browser-nya.
+        # TIDAK perlu context.new_page() — itu Playwright API lama yang sudah tidak dipakai.
+        thread_browser = BrowserAgent(llm_client=self.llm)
         thread_upwork = FreelanceAgent(thread_browser, self.llm)
         thread_fiverr = FiverrAgent(thread_browser, self.llm)
         thread_x = XAgent(thread_browser, self.llm)
+
+        logger.info("[Search-%s] Browser-Use thread browser siap.", platform)
 
         try:
             while get_current_platform() == platform and not stop.is_set():
@@ -229,7 +224,6 @@ class FreelanceOrchestrator:
                                     time.sleep(30)
 
                         elif platform == "fiverr":
-                            # Pastikan Gig sudah ada sebelum cek order
                             thread_fiverr.ensure_gig_exists()
 
                             orders = thread_fiverr.check_active_orders()
@@ -240,25 +234,15 @@ class FreelanceOrchestrator:
                             thread_fiverr.search_and_offer_gigs()
 
                             if not fiverr_activity_found:
-                                # Cek apakah X sedang restricted
                                 if thread_x.is_restricted:
-                                    # X restricted → JANGAN posting/reply di X
-                                    # Lakukan engagement (scroll & like) untuk pulihkan akun
                                     logger.info(
                                         "[Orchestrator] X restricted. Jalankan engagement + "
                                         "fokus ke Fiverr/Upwork."
                                     )
                                     thread_x.engage_timeline(duration_seconds=90)
-
-                                    # Gunakan waktu sisa untuk kerja produktif di Fiverr
                                     thread_fiverr.search_and_offer_gigs()
 
-                                    # Atau coba Upwork jika ada waktu
                                     try:
-                                        logger.info(
-                                            "[Orchestrator] X restricted, coba cari job "
-                                            "tambahan di Upwork."
-                                        )
                                         upwork_jobs = thread_upwork.scrape_jobs()
                                         if upwork_jobs:
                                             filtered = thread_upwork.filter_jobs_batch(upwork_jobs)
@@ -272,7 +256,6 @@ class FreelanceOrchestrator:
                                     except Exception as e:
                                         logger.debug("[Orchestrator] Upwork fallback gagal: %s", e)
                                 else:
-                                    # X normal → jalankan X agent seperti biasa
                                     logger.info("[Fiverr] Tidak ada aktivitas, fallback ke X (Twitter)...")
                                     thread_x.login_x()
                                     result = None
@@ -281,7 +264,6 @@ class FreelanceOrchestrator:
                                     else:
                                         result = thread_x.search_and_reply_jobs()
 
-                                    # Jika X ternyata restricted saat dicoba
                                     if result == -1 or thread_x.is_restricted:
                                         logger.info(
                                             "[Orchestrator] X baru saja restricted. "
@@ -296,11 +278,18 @@ class FreelanceOrchestrator:
                         else:
                             run_platform_logic()
                     except Exception as e:
-                        logger.error(f"[Orchestrator] Error for {platform}: {e}")
+                        logger.error("[Orchestrator] Error for %s: %s", platform, e)
                         self.error_learner.record_error(platform, type(e).__name__, str(e))
-                        time.sleep(60)
+                        # FIX: Terapkan recovery strategy dari error_learning
+                        strategy = self.error_learner.get_recovery_strategy(platform, type(e).__name__)
+                        logger.info("[ErrorLearning] Menerapkan strategi: %s", strategy)
+                        if strategy == "re-login":
+                            self._login_platform(platform)
+                        elif strategy == "wait_and_retry":
+                            time.sleep(300)
+                        else:
+                            time.sleep(60)
 
-                    # Jeda 10 menit antar siklus pencarian
                     idle_wait = 0
                     while idle_wait < 600 and not stop.is_set():
                         time.sleep(10)
@@ -313,13 +302,6 @@ class FreelanceOrchestrator:
 
         finally:
             try:
-                # Tutup tab yang dibuat khusus untuk thread ini.
-                # Tab utama (pages[0]) TIDAK ditutup — Brave tetap hidup.
-                if thread_browser.page:
-                    try:
-                        thread_browser.page.close()
-                    except Exception:
-                        pass
                 thread_browser.quit()
             except Exception:
                 pass
@@ -331,11 +313,10 @@ class FreelanceOrchestrator:
                                 search_thread: threading.Thread):
         count = self.email_monitor.pending_count()
         logger.info(
-            "[Orchestrator] ⚡ INTERUPSI email! %d pesanan. Hentikan slot %s sementara.",
+            "[Orchestrator] INTERUPSI email! %d pesanan. Hentikan slot %s sementara.",
             count, current_platform.upper()
         )
 
-        # Hentikan search_thread dulu SEBELUM ambil browser_lock (cegah deadlock)
         interrupt_event.set()
         search_thread.join(timeout=30)
 
@@ -346,7 +327,7 @@ class FreelanceOrchestrator:
             if not order:
                 break
             logger.info(
-                "[Orchestrator] 🎯 Handle pesanan: %s [%s] — %s",
+                "[Orchestrator] Handle pesanan: %s [%s] — %s",
                 order.client_name, order.platform.upper(), order.subject
             )
             try:
@@ -357,15 +338,13 @@ class FreelanceOrchestrator:
             except Exception as exc:
                 logger.error("[Orchestrator] Gagal handle pesanan %s: %s", order.order_id, exc)
 
-        logger.info("[Orchestrator] ✅ Semua pesanan email selesai.")
+        logger.info("[Orchestrator] Semua pesanan email selesai.")
         return job_data_to_return
 
     def _process_order(self, order: IncomingOrder):
         """
         Proses satu order dari email. Generate reply dan tentukan state.
-        FIXED: Tidak ada lagi syntax error di blok ini.
         """
-        # Ambil konteks memori klien
         client_ctx = self.memory.get_context_for_llm(order.platform, order.client_name)
 
         prompt = (
@@ -385,7 +364,6 @@ class FreelanceOrchestrator:
             "Gunakan REVISION_REQUESTED HANYA jika klien minta perubahan spesifik pada deliverable."
         )
 
-        # Gunakan negotiation model (26b) untuk analisis pesan
         llm_response = self.llm.generate_content(prompt, require_json=True, use_negotiation_model=True)
         reply = ""
         state = "REPLY_ONLY"
@@ -402,8 +380,7 @@ class FreelanceOrchestrator:
                 state = parsed.get("state", "REPLY_ONLY")
 
             except Exception as e:
-                logger.error(f"Failed to parse LLM response: {e}")
-                # Fallback: generate reply sederhana
+                logger.error("Failed to parse LLM response: %s", e)
                 reply = self.llm.generate_content(
                     f"Write a short professional reply to this freelance client message: {order.description[:200]}. "
                     "Confirm receipt and that you'll start soon. Max 60 words.",
@@ -414,7 +391,6 @@ class FreelanceOrchestrator:
             reply = "Thank you for your message! I've received your order and will begin shortly."
             state = "REPLY_ONLY"
 
-        # Kirim reply ke platform yang sesuai
         if order.platform == "upwork":
             if reply:
                 logger.info("[Upwork] Reply ke %s: %s", order.client_name, reply[:80])
@@ -429,7 +405,6 @@ class FreelanceOrchestrator:
             if reply:
                 self._fiverr_agent.reply_to_buyer(fake_order, reply)
 
-        # Update memori klien
         self.memory.add_negotiation_note(
             order.platform, order.client_name,
             f"Email order — state: {state} | subject: {order.subject}"
@@ -439,7 +414,6 @@ class FreelanceOrchestrator:
         logger.info("[Orchestrator] Pesanan %s dari %s selesai diproses. State: %s",
                     order.order_id, order.platform, state)
 
-        # Hanya return job_data jika perlu tindakan lanjut (codegen)
         if state in ["REVISION_REQUESTED", "CONTRACT_ACCEPTED"]:
             return {
                 "title": order.subject,
@@ -450,5 +424,4 @@ class FreelanceOrchestrator:
                 "url": ""
             }
 
-        # Untuk REPLY_ONLY dan ASK_CLARIFICATION: tidak perlu codegen
         return None
