@@ -56,7 +56,7 @@ from llm_sandbox import SandboxSession
 def run_in_sandbox(code_path: str) -> tuple:
     """Run code in llm-sandbox isolated container."""
     try:
-        with SandboxSession(lang="python", verbose=False) as session:
+        with SandboxSession(lang="python", backend="local", verbose=False) as session:
             with open(code_path, "r") as f:
                 code = f.read()
 
