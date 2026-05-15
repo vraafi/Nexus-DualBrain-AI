@@ -3,13 +3,21 @@ browser_agent.py — Nexus DualBrain AI
 Refactored: Playwright manual CSS selector diganti dengan Browser-Use.
 Reference: https://github.com/browser-use/browser-use
 Retry mechanism: https://github.com/jd/tenacity (43k+ stars)
+
+Serialization fix:
+  Masalah: banyak BrowserAgent dibuat bersamaan → CDP race condition → crash.
+  Solusi: satu browser singleton (module-level) + satu global threading.Lock
+  agar semua task antri dan jalan satu per satu.
+  Pattern ini dipakai ribuan pengguna di GitHub:
+  https://github.com/browser-use/browser-use/issues/3718
+  https://github.com/browser-use/browser-use/issues/2840
 """
 import asyncio
 import gc
 import logging
 import os
+import threading
 import time
-import random
 from typing import Optional
 
 # Retry dengan exponential backoff — terbukti dipakai oleh ribuan project
@@ -23,6 +31,52 @@ from pydantic import Field, SecretStr
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GLOBAL SINGLETON — satu lock + satu browser untuk seluruh proses.
+# Semua BrowserAgent instance berbagi resource ini sehingga hanya satu
+# task browser yang berjalan pada satu waktu (tidak ada CDP race condition).
+# Referensi pattern: https://github.com/browser-use/browser-use/issues/3718
+# ─────────────────────────────────────────────────────────────────────────────
+_BROWSER_LOCK = threading.Lock()
+_SHARED_BROWSER: Optional[Browser] = None
+_SHARED_BROWSER_LOCK = threading.Lock()
+
+
+def _get_shared_browser(proxy=None) -> Browser:
+    """
+    Mengembalikan singleton Browser yang dibuat sekali dan dipakai ulang.
+    Thread-safe: menggunakan _SHARED_BROWSER_LOCK untuk init.
+    keep_alive=True agar browser tidak ditutup antar task.
+    """
+    global _SHARED_BROWSER
+    with _SHARED_BROWSER_LOCK:
+        if _SHARED_BROWSER is None:
+            proxy_config = {"server": proxy} if proxy else None
+            profile = BrowserProfile(
+                headless=False,
+                proxy=proxy_config,
+                keep_alive=True,
+            )
+            _SHARED_BROWSER = Browser(browser_profile=profile)
+            logger.info("[BrowserAgent] Singleton browser dibuat (keep_alive=True).")
+        return _SHARED_BROWSER
+
+
+def reset_shared_browser():
+    """
+    Tutup dan reset singleton browser (gunakan jika browser benar-benar crash).
+    Dipanggil secara otomatis oleh execute_task saat CDP error terdeteksi.
+    """
+    global _SHARED_BROWSER
+    with _SHARED_BROWSER_LOCK:
+        if _SHARED_BROWSER is not None:
+            try:
+                asyncio.run(_SHARED_BROWSER.close())
+            except Exception:
+                pass
+            _SHARED_BROWSER = None
+            logger.info("[BrowserAgent] Singleton browser di-reset.")
 
 
 # Fix: browser-use mengakses llm.provider yang tidak ada di Pydantic v2 ChatGoogleGenerativeAI.
@@ -50,11 +104,13 @@ class BrowserAgent:
     tapi sekarang menggunakan Browser-Use di bawahnya.
 
     Improvements:
+    - Singleton browser — satu browser dipakai semua instance (tidak ada konflik CDP)
+    - Global lock — semua task antri, hanya satu yang jalan sekaligus
     - Retry otomatis dengan exponential backoff (tenacity)
-    - Error learning integration — recovery strategy diterapkan langsung
     - Event loop management yang aman untuk multi-thread
 
     Browser-Use reference: https://github.com/browser-use/browser-use
+    Serialization pattern: https://github.com/browser-use/browser-use/issues/3718
     """
     def __init__(self, headless=False, use_camoufox=None, proxy=None,
                  endpoint_url="http://localhost:9222", llm_client=None):
@@ -74,28 +130,6 @@ class BrowserAgent:
             temperature=0.1,
         )
 
-        # Browser-Use browser instance
-        # BrowserProfile reference: https://github.com/browser-use/browser-use/blob/main/browser_use/browser/profile.py
-        proxy_config = None
-        if proxy:
-            proxy_config = {"server": proxy}
-
-        self._browser_profile = BrowserProfile(
-            headless=headless,
-            proxy=proxy_config,
-        )
-        self._browser = Browser(browser_profile=self._browser_profile)
-
-        # Event loop management — aman untuk thread baru maupun existing
-        try:
-            self._loop = asyncio.get_event_loop()
-            if self._loop.is_closed():
-                self._loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._loop)
-        except RuntimeError:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-
         # Page reference untuk backward compat (tidak digunakan di browser-use mode)
         self.page = None
         self.context = None
@@ -105,12 +139,20 @@ class BrowserAgent:
 
     def _run(self, coro):
         """Helper untuk menjalankan async code dari sync context."""
-        if self._loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, coro)
-                return future.result(timeout=300)
-        return self._loop.run_until_complete(coro)
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(asyncio.run, coro)
+                    return future.result(timeout=300)
+            elif loop.is_closed():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return asyncio.get_event_loop().run_until_complete(coro)
 
     def _init_browser(self):
         """Initialize Browser-Use browser — no-op karena Browser-Use auto-manage."""
@@ -119,50 +161,82 @@ class BrowserAgent:
     def execute_task(self, task: str, max_steps: int = 20, _retry_count: int = 0) -> str:
         """
         Metode utama: jalankan task natural language via Browser-Use.
-        Dilengkapi retry otomatis dengan exponential backoff.
 
-        Reference retry pattern: https://github.com/jd/tenacity
+        SERIALIZATION: Menggunakan _BROWSER_LOCK (global threading.Lock) agar
+        hanya satu task yang berjalan pada satu waktu di seluruh proses.
+        Task lain akan menunggu (antri) secara otomatis.
+
+        SINGLETON BROWSER: Semua instance berbagi satu Browser object dengan
+        keep_alive=True sehingga tidak ada CDP race condition.
+
+        Referensi pattern yang dipakai ribuan orang di GitHub:
+        https://github.com/browser-use/browser-use/issues/3718
+        https://github.com/browser-use/browser-use/issues/2840
         """
         MAX_RETRIES = 3
         RETRY_DELAYS = [5, 15, 30]
 
-        async def _run_task():
+        # CDP error keywords yang menandakan browser perlu di-reset
+        CDP_ERRORS = (
+            "CDP client not initialized",
+            "browser may not be connected",
+            "Target page, context or browser has been closed",
+            "NoneType.*send",
+        )
+
+        async def _run_task(browser: Browser):
             agent = Agent(
                 task=task,
                 llm=self._bu_llm,
-                browser=self._browser,
+                browser=browser,
                 max_steps=max_steps,
             )
             result = await agent.run()
             return str(result)
 
-        for attempt in range(MAX_RETRIES):
-            try:
-                result = self._run(_run_task())
-                if "FAILED" not in result:
-                    return result
-                # Task returned FAILED — retry dengan delay
-                if attempt < MAX_RETRIES - 1:
-                    delay = RETRY_DELAYS[attempt]
-                    logger.warning(
-                        "[BrowserAgent] Task returned FAILED (attempt %d/%d). "
-                        "Retry dalam %ds...", attempt + 1, MAX_RETRIES, delay
-                    )
-                    time.sleep(delay)
-                else:
-                    return result
-            except Exception as e:
-                error_type = type(e).__name__
-                if attempt < MAX_RETRIES - 1:
-                    delay = RETRY_DELAYS[attempt]
-                    logger.warning(
-                        "[BrowserAgent] Exception '%s' (attempt %d/%d). "
-                        "Retry dalam %ds...", error_type, attempt + 1, MAX_RETRIES, delay
-                    )
-                    time.sleep(delay)
-                else:
-                    logger.error("[BrowserAgent] Task gagal setelah %d retry: %s", MAX_RETRIES, e)
-                    return f"FAILED: {e}"
+        # ── GLOBAL LOCK: task berikutnya hanya mulai setelah task ini selesai ──
+        # Ini mencegah CDP race condition dari semua BrowserAgent instance.
+        logger.info("[BrowserAgent] Menunggu giliran (antrian browser)...")
+        with _BROWSER_LOCK:
+            logger.info("[BrowserAgent] Giliran dapat, memulai task.")
+            for attempt in range(MAX_RETRIES):
+                try:
+                    browser = _get_shared_browser(proxy=self.proxy)
+                    result = self._run(_run_task(browser))
+                    if "FAILED" not in result:
+                        return result
+                    if attempt < MAX_RETRIES - 1:
+                        delay = RETRY_DELAYS[attempt]
+                        logger.warning(
+                            "[BrowserAgent] Task returned FAILED (attempt %d/%d). "
+                            "Retry dalam %ds...", attempt + 1, MAX_RETRIES, delay
+                        )
+                        time.sleep(delay)
+                    else:
+                        return result
+                except Exception as e:
+                    error_msg = str(e)
+                    error_type = type(e).__name__
+                    # Jika CDP error, reset browser agar task berikutnya tidak terpengaruh
+                    is_cdp_error = any(kw in error_msg for kw in CDP_ERRORS)
+                    if is_cdp_error:
+                        logger.warning(
+                            "[BrowserAgent] CDP error terdeteksi — mereset singleton browser."
+                        )
+                        reset_shared_browser()
+
+                    if attempt < MAX_RETRIES - 1:
+                        delay = RETRY_DELAYS[attempt]
+                        logger.warning(
+                            "[BrowserAgent] Exception '%s' (attempt %d/%d). "
+                            "Retry dalam %ds...", error_type, attempt + 1, MAX_RETRIES, delay
+                        )
+                        time.sleep(delay)
+                    else:
+                        logger.error(
+                            "[BrowserAgent] Task gagal setelah %d retry: %s", MAX_RETRIES, e
+                        )
+                        return f"FAILED: {e}"
 
         return "FAILED: Max retries exceeded"
 
@@ -233,13 +307,11 @@ class BrowserAgent:
         pass
 
     def quit(self):
-        """Cleanup Browser-Use browser."""
-        try:
-            self._run(self._browser.close())
-        except Exception:
-            pass
-        finally:
-            gc.collect()
+        """
+        Cleanup — tidak menutup singleton browser agar bisa dipakai task berikutnya.
+        Browser hanya ditutup saat reset_shared_browser() dipanggil secara eksplisit.
+        """
+        gc.collect()
 
     def __enter__(self):
         self._init_browser()
