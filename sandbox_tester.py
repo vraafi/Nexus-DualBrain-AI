@@ -13,15 +13,23 @@ class SandboxTester:
         self.llm = llm_client
 
     def _static_analysis(self, code_path):
-        """Runs flake8 to catch syntax errors before executing."""
+        """Runs flake8 hanya untuk error kritis (syntax, undefined name).
+        Style warnings (E501 baris panjang, W293 whitespace, E302 blank lines, dll)
+        sengaja diabaikan agar tidak memenuhi log — hanya SyntaxError & F-errors
+        yang benar-benar memblokir eksekusi yang dilaporkan.
+        Selector: E9xx = SyntaxError/IndentationError, F = pyflakes (undefined names, dll)
+        """
         logging.info("Running static analysis via flake8...")
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "flake8", code_path],
+                [sys.executable, "-m", "flake8",
+                 "--select=E9,F",
+                 "--extend-ignore=F401,F841",
+                 code_path],
                 capture_output=True, text=True
             )
-            if result.returncode != 0:
-                logging.warning(f"Static analysis found potential issues:\n{result.stdout}")
+            if result.returncode != 0 and result.stdout.strip():
+                logging.warning(f"Static analysis ditemukan error kritis:\n{result.stdout}")
                 return False, result.stdout
             return True, ""
         except Exception as e:
