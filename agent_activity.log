@@ -216,3 +216,12 @@ Call log:
 2026-05-15 02:47:54,193 [MainThread] INFO — [EmailMonitor] Dihentikan.
 2026-05-15 02:47:54,494 [MainThread] INFO — Koneksi CDP dilepas. Brave tetap terbuka.
 2026-05-15 02:47:54,541 [MainThread] INFO — ⏳ Cooldown 7200 detik...
+2026-05-15 11:54:13,989 [MainThread] INFO — ============================================================
+2026-05-15 11:54:13,989 [MainThread] INFO — Nexus DualBrain AI — Autonomous Freelance Agent
+2026-05-15 11:54:13,989 [MainThread] INFO — ============================================================
+2026-05-15 11:54:13,989 [MainThread] INFO — ✅ Hermes Agent (skills, memory, Telegram) : AKTIF
+2026-05-15 11:54:13,989 [MainThread] INFO — ⚠️  Antigravity (autonomous local coding)   : tidak terinstall
+2026-05-15 11:54:13,990 [MainThread] INFO — ⚠️  Aider (fallback coding agent)           : tidak terinstall
+2026-05-15 11:54:13,990 [MainThread] INFO — ✅ GitHub CLI (issue/PR management)       : AKTIF
+2026-05-15 11:54:13,990 [MainThread] INFO — ℹ️  Hermes CLI (optional, extra features)  : tidak terinstall
+2026-05-15 11:54:13,990 [MainThread] INFO — ============================================================

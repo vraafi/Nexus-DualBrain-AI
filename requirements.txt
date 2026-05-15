@@ -41,3 +41,4 @@ setuptools<70
 
 # --- LLM Sandbox ---
 llm-sandbox>=0.1.0
+mcp
