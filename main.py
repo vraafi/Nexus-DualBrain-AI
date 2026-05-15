@@ -680,282 +680,243 @@ def run_coding_benchmarks(llm, hermes):
     
     import re
     import time
+    import random
+    import glob as _glob
     for task in tasks:
         logging.info("📝 Menjalankan Benchmark %s: %s", task['level'], task['title'])
-        
-        safe_title = re.sub(r'[^a-zA-Z0-9-]', '-', task['title']).lower()[:30]
-        repo_name = f"sim-{task['level'].lower()}-{safe_title}-{int(time.time())}"
-        full_repo_name = f"vraafi/{repo_name}"
-        
-        # 1. Create Private Repo & Clone locally
-        subprocess.run(
-            ["gh", "repo", "create", repo_name, "--private", "--add-readme"],
-            capture_output=True, text=True, check=False
-        )
-        logging.info("[Benchmark] Repo private dibuat: %s", full_repo_name)
 
-        # Clone repo tersebut ke folder temp
-        clone_dir = f"temp_{repo_name}"
-        clone_res = subprocess.run(
-            ["gh", "repo", "clone", full_repo_name, clone_dir],
-            capture_output=True, text=True
-        )
-        # Pastikan clone_dir ada — buat manual jika clone gagal
-        if not os.path.isdir(clone_dir):
-            logging.warning("[Benchmark] Clone gagal (%s). Membuat direktori manual...",
-                            clone_res.stderr.strip()[:100])
-            os.makedirs(clone_dir, exist_ok=True)
-            subprocess.run(["git", "init"], cwd=clone_dir, capture_output=True)
-            # Paksa nama branch ke 'main' agar push origin main tidak gagal
-            subprocess.run(
-                ["git", "symbolic-ref", "HEAD", "refs/heads/main"],
-                cwd=clone_dir, capture_output=True
-            )
-            subprocess.run(
-                ["git", "config", "user.email", "nexus-agent@replit.com"],
-                cwd=clone_dir, capture_output=True
-            )
-            subprocess.run(
-                ["git", "config", "user.name", "Nexus DualBrain AI"],
-                cwd=clone_dir, capture_output=True
-            )
-            subprocess.run(
-                ["git", "remote", "add", "origin",
-                 f"https://github.com/{full_repo_name}.git"],
-                cwd=clone_dir, capture_output=True
-            )
+        safe_title = re.sub(r'[^a-zA-Z0-9-]', '-', task['title']).lower()[:25]
+        ts = int(time.time())
 
-        # 2. Persiapan Prompt Antigravity (Dengan Proteksi Requirement & 10x Retry)
-        antigravity_prompt = (
+        # ── Gemini API keys ──────────────────────────────────────────────────
+        gemini_keys = [os.environ.get(f"GEMINI_KEY_{i}") for i in range(1, 11)
+                       if os.environ.get(f"GEMINI_KEY_{i}")]
+        if not gemini_keys:
+            gemini_keys = [os.environ.get("GEMINI_API_KEY", "DUMMY_KEY")]
+        random.shuffle(gemini_keys)
+
+        # ── Prompt yang sama untuk kedua agent ──────────────────────────────
+        task_prompt = (
             f"Task: {task['title']}\n"
             f"Description: {task['prompt']}\n\n"
             "CRITICAL INSTRUCTION FOR AI AGENT:\n"
             "You are an expert developer working on a Fiverr Gig.\n"
-            "Before writing any code, CRITICALLY ANALYZE the client's requirements above.\n"
-            "If the requirements are ambiguous, use the MCP tool 'ask_client_question' to ask for clarification.\n"
-            "1. WRITE CODE: Write the Python script to the requested file.\n"
-            "2. TERMINAL TEST: You MUST use the MCP tool 'request_hermes_to_test_code' to ask Hermes to run your code in the terminal.\n"
-            "3. FIX/DEBATE: If Hermes returns a terminal ERROR log, read the log carefully. Fix your code and call the test tool again. If the error is weird, you can debate or apologize and rewrite.\n"
-            "4. UPGRADE: If Hermes returns a SUCCESS log, review it. If it can be upgraded for better quality, edit and test again.\n"
-            "5. FINAL SUBMISSION: Once perfectly tested and working, use the MCP tool 'submit_code_for_testing' to finalize delivery.\n"
+            "1. WRITE CODE: Write complete, working Python 3.10+ code.\n"
+            "2. Include error handling, logging, and docstrings.\n"
+            "3. The code must be runnable with 'python3 <file>'.\n"
+            "4. Save the code to the specified file.\n"
         )
 
-        logging.info("[Benchmark] Memanggil Antigravity...")
-        
-        # Ambil semua API Key dari environment
-        gemini_keys = [os.environ.get(f"GEMINI_KEY_{i}") for i in range(1, 11) if os.environ.get(f"GEMINI_KEY_{i}")]
-        if not gemini_keys:
-            gemini_keys = ["DUMMY_KEY"] # Fallback if empty
-            
-        import random
-        random.shuffle(gemini_keys) # Acak urutan key untuk rotasi
-        
-        # 1. Jalankan Antigravity Terlebih Dahulu
-        antigravity_success = False
-        for attempt, key in enumerate(gemini_keys):
-            logging.info(f"[Benchmark] Menjalankan Antigravity (Attempt {attempt+1})...")
-            antigravity_env = os.environ.copy()
-            antigravity_env["GEMINI_API_KEY"] = key
-            
-            file_name_antigravity = f"benchmark_{task['level'].lower()}_antigravity.py"
-            antigravity_cmd = [
-                "antigravity",
-                "--model", "gemini/gemini-3-flash",
-                "--message", antigravity_prompt,
-                "--yes-always",
-                "--auto-commits",
-                "--mcp", "C:/Users/user/.antigravity/Nexus-DualBrain-AI/mcp.json",
-                file_name_antigravity
-            ]
-            antigravity_process = subprocess.run(antigravity_cmd, cwd=clone_dir, env=antigravity_env, capture_output=True, text=True)
-            
-            if antigravity_process.returncode == 0:
-                antigravity_success = True
-                hermes.send_message(f"✅ Antigravity sukses mengerjakan tugas: {task['level']}", markdown=True)
-                break
-            else:
-                logging.warning(f"⚠️ Antigravity gagal pada attempt {attempt+1}. Mencoba key lain...")
-
-        # 2. Jalankan Aider Setelah Antigravity Selesai (Sekuensial)
-        aider_success = False
-        aider_cli = shutil.which("aider")
-        if aider_cli:
-            logging.info(f"[Benchmark] Menjalankan Aider (Sekuensial)...")
-            file_name_aider = f"benchmark_{task['level'].lower()}_aider.py"
-            aider_cmd = [aider_cli, "--model", "gemini/gemma-4-31b-it", "--message", antigravity_prompt, "--yes", "--no-auto-commits"]
-            # Berikan file name spesifik agar tidak konflik dengan file antigravity
-            aider_res = subprocess.run(aider_cmd, cwd=clone_dir, env=antigravity_env, capture_output=True, text=True)
-            if aider_res.returncode == 0:
-                aider_success = True
-                hermes.send_message(f"✅ Aider sukses mengerjakan tugas: {task['level']}", markdown=True)
-            else:
-                hermes.send_message(f"❌ Aider gagal pada tugas: {task['level']}", markdown=True)
-
-        logging.info("[Antigravity STDOUT]\n%s", antigravity_process.stdout if antigravity_process else "")
-        if antigravity_process and antigravity_process.stderr:
-            logging.error("[Antigravity STDERR]\n%s", antigravity_process.stderr)
-        
-        # Evaluasi hasil Antigravity
-        output_for_eval = (antigravity_process.stdout or "") + "\n" + (antigravity_process.stderr or "")
-        # Gunakan regex sederhana: cari kata kunci NEED_INFO yang bukan bagian dari rincian instruksi (THINKING)
-        # Biasanya Antigravity akan membalas di bagian ► ANSWER
-        if "► ANSWER\n\nNEED_INFO:" in output_for_eval or "► ANSWER\nNEED_INFO:" in output_for_eval:
-            try:
-                # Potong mulai dari NEED_INFO di dalam blok answer
-                answer_block = output_for_eval.split("► ANSWER")[1]
-                questions = answer_block.split("NEED_INFO:")[1].split('\n\n\n')[0].strip()
-            except:
-                questions = "Tolong berikan detail lebih spesifik mengenai arsitektur atau input yang Anda harapkan."
-                
-            logging.warning("🚨 [Antigravity Pause] Kebutuhan klien tidak jelas. Antigravity menunda task dan meminta info: %s", questions)
-            
-            # Hubungkan ke Telegram Hermes untuk diteruskan ke klien Fiverr/Upwork
-            try:
-                # Karena ini ada di scope lokal main.py, kita kirim log ke console, 
-                # di real life ini akan diteruskan oleh freelance_orchestrator
-                logging.info(f"Mengirim pesan ke klien Fiverr: 'Halo! Terkait gig ini, tim developer kami membutuhkan informasi tambahan: {questions}'")
-            except:
-                pass
-                
-            # Jangan lakukan push, skip task ini sampai klien menjawab
-            continue
-
-        # CATATAN: Push ke GitHub dilakukan SETELAH sandbox test lulus (lihat bawah)
-        # Jangan push sekarang — kode belum diuji!
-
-        # 4. Pindahkan kode murni buatan Antigravity ke luar untuk dites Sandbox
-        file_name = f"benchmark_{task['level'].lower()}.py"
-        target_file = os.path.join(clone_dir, file_name)
-
-        # Cari semua kandidat file .py yang mungkin dibuat Antigravity/Aider di clone_dir
-        file_found = False
-        candidates = [
-            target_file,
-            os.path.join(clone_dir, file_name_antigravity),
-            os.path.join(clone_dir, f"benchmark_{task['level'].lower()}_aider.py"),
-            os.path.join(clone_dir, "solution.py"),
-            os.path.join(clone_dir, "main.py"),
-        ]
-        for candidate in candidates:
-            if os.path.exists(candidate):
-                shutil.copy(candidate, file_name)
-                logging.info("[Benchmark] Berhasil mengekstrak kode dari: %s", candidate)
-                file_found = True
-                break
-
-        # Jika tidak ada file yang dibuat oleh Antigravity/Aider, scan semua .py di clone_dir
-        if not file_found:
-            import glob as _glob
-            py_files = [
-                f for f in _glob.glob(os.path.join(clone_dir, "*.py"))
-                if not os.path.basename(f).startswith("test_")
-                and os.path.basename(f) not in ("setup.py", "conftest.py")
-            ]
-            if py_files:
-                # Ambil file terbesar (kemungkinan besar itulah kode utama)
-                py_files.sort(key=os.path.getsize, reverse=True)
-                shutil.copy(py_files[0], file_name)
-                logging.info("[Benchmark] File Antigravity ditemukan via scan: %s", py_files[0])
-                file_found = True
-
-        # Fallback ke Aider dengan output file eksplisit jika semua gagal
-        if not file_found and aider_cli:
-            logging.warning("[Benchmark] Antigravity tidak buat file. Fallback Aider dengan output eksplisit...")
-            aider_fallback_cmd = [
-                aider_cli,
-                "--model", "gemini/gemma-4-31b-it",
-                "--message", (
-                    f"{antigravity_prompt}\n\n"
-                    f"WAJIB: Simpan kode ke file bernama '{file_name}'. "
-                    "Pastikan file dibuat dan bisa dijalankan."
-                ),
-                "--yes",
-                "--no-auto-commits",
-                file_name
-            ]
-            aider_fb_res = subprocess.run(
-                aider_fallback_cmd, cwd=clone_dir,
-                env=antigravity_env, capture_output=True, text=True, timeout=300
+        # ── Helper: buat repo GitHub + clone/init dir lokal ─────────────────
+        def _setup_repo(agent_label, _safe_title=safe_title, _ts=ts, _task=task):
+            rname = (f"sim-{_task['level'].lower()}-{agent_label}-"
+                     f"{_safe_title}-{_ts}")
+            full = f"vraafi/{rname}"
+            subprocess.run(
+                ["gh", "repo", "create", rname, "--private", "--add-readme"],
+                capture_output=True, text=True, check=False
             )
-            if os.path.exists(os.path.join(clone_dir, file_name)):
-                shutil.copy(os.path.join(clone_dir, file_name), file_name)
-                logging.info("[Benchmark] ✅ Aider fallback berhasil membuat file: %s", file_name)
-                file_found = True
-            else:
-                logging.error("[Benchmark] Aider fallback juga gagal membuat file. Error: %s",
-                              aider_fb_res.stderr[:200])
+            logging.info("[Benchmark] Repo %s dibuat: %s", agent_label.upper(), full)
+            cdir = f"temp_{rname}"
+            subprocess.run(["gh", "repo", "clone", full, cdir],
+                           capture_output=True, text=True)
+            if not os.path.isdir(cdir):
+                logging.warning("[Benchmark] Clone %s gagal. Buat dir manual...",
+                                agent_label)
+                os.makedirs(cdir, exist_ok=True)
+                subprocess.run(["git", "init"], cwd=cdir, capture_output=True)
+                subprocess.run(["git", "symbolic-ref", "HEAD", "refs/heads/main"],
+                               cwd=cdir, capture_output=True)
+                subprocess.run(["git", "config", "user.email",
+                                "nexus-agent@replit.com"],
+                               cwd=cdir, capture_output=True)
+                subprocess.run(["git", "config", "user.name", "Nexus DualBrain AI"],
+                               cwd=cdir, capture_output=True)
+                subprocess.run(
+                    ["git", "remote", "add", "origin",
+                     f"https://github.com/{full}.git"],
+                    cwd=cdir, capture_output=True
+                )
+            return full, cdir
 
-        # Last resort: generate langsung via Gemini LLM
-        if not file_found:
-            logging.warning("[Benchmark] Semua agent gagal membuat file. Generate via LLM langsung...")
+        # ── Helper: commit + push file ke repo ──────────────────────────────
+        def _push_to_repo(cdir, fname, level, agent_label, full_rname):
+            dest = os.path.join(cdir, fname)
+            shutil.copy(fname, dest)
+            subprocess.run(["git", "-C", cdir, "config", "user.email",
+                            "nexus-agent@replit.com"], capture_output=True)
+            subprocess.run(["git", "-C", cdir, "config", "user.name",
+                            "Nexus DualBrain AI"], capture_output=True)
+            subprocess.run(["git", "-C", cdir, "add", fname], capture_output=True)
+            subprocess.run(
+                ["git", "-C", cdir, "commit", "-m",
+                 f"feat: {agent_label} benchmark {level} — sandbox PASSED"],
+                capture_output=True, text=True
+            )
+            pr = subprocess.run(
+                ["git", "-C", cdir, "push", "--set-upstream", "origin",
+                 "HEAD:main"],
+                capture_output=True, text=True
+            )
+            if pr.returncode == 0:
+                logging.info("[Auto-Publish] ✅ %s di-push ke: %s",
+                             agent_label.upper(), full_rname)
+                hermes.send_message(
+                    f"✅ Benchmark {level} [{agent_label.upper()}] LULUS sandbox!\n"
+                    f"Repo: `{full_rname}`"
+                )
+            else:
+                logging.error("[Auto-Publish] ❌ Gagal push %s: %s",
+                              agent_label.upper(), pr.stderr[:300])
+
+        # ── Buat DUA repo terpisah (satu Antigravity, satu Aider) ───────────
+        full_ag_repo, ag_dir = _setup_repo("antigravity")
+        full_aider_repo, aider_dir = _setup_repo("aider")
+        antigravity_cli = shutil.which("antigravity")
+        aider_cli_bin = shutil.which("aider")
+
+        # ════════════════════════════════════════════════════════════════════
+        # ANTIGRAVITY — jalankan di repo sendiri, cari file output-nya
+        # ════════════════════════════════════════════════════════════════════
+        ag_file = f"benchmark_{task['level'].lower()}_antigravity.py"
+        ag_env = {**os.environ, "GEMINI_API_KEY": gemini_keys[0]}
+        ag_found = False
+
+        if antigravity_cli:
+            for attempt, key in enumerate(gemini_keys):
+                logging.info("[Benchmark] Menjalankan Antigravity (Attempt %d)...",
+                             attempt + 1)
+                ag_env["GEMINI_API_KEY"] = key
+                ag_cmd = [
+                    antigravity_cli,
+                    "--model", "gemini/gemini-3-flash",
+                    "--message", task_prompt,
+                    "--yes-always", "--auto-commits",
+                    "--mcp",
+                    "C:/Users/user/.antigravity/Nexus-DualBrain-AI/mcp.json",
+                    ag_file
+                ]
+                ag_res = subprocess.run(
+                    ag_cmd, cwd=ag_dir, env=ag_env,
+                    capture_output=True, text=True, timeout=300
+                )
+                if ag_res.stderr:
+                    logging.error("[Antigravity STDERR]\n%s", ag_res.stderr)
+                # Cari file output dengan nama eksplisit dulu
+                if os.path.exists(os.path.join(ag_dir, ag_file)):
+                    shutil.copy(os.path.join(ag_dir, ag_file), ag_file)
+                    ag_found = True
+                    break
+                # Scan .py files di ag_dir jika nama file beda
+                py_files = [
+                    f for f in _glob.glob(os.path.join(ag_dir, "*.py"))
+                    if os.path.basename(f) not in ("setup.py", "conftest.py")
+                    and not os.path.basename(f).startswith("test_")
+                ]
+                if py_files:
+                    py_files.sort(key=os.path.getsize, reverse=True)
+                    shutil.copy(py_files[0], ag_file)
+                    logging.info("[Benchmark] Antigravity file ditemukan via scan: %s",
+                                 py_files[0])
+                    ag_found = True
+                    break
+
+        if not ag_found:
+            logging.warning("[Benchmark] Antigravity tidak buat file. "
+                            "Generate via LLM untuk repo Antigravity...")
             llm_code = llm.generate_content(
-                f"Write complete, working Python code for this task:\n\n{task['prompt']}\n\n"
-                "Return ONLY the raw Python code, no markdown fences.",
+                f"Write complete, working Python 3.10+ code for:\n\n"
+                f"{task['prompt']}\n\nReturn ONLY raw Python code.",
                 use_codegen_model=True
             )
             if llm_code:
-                # Strip markdown jika ada
                 if "```python" in llm_code:
                     llm_code = llm_code.split("```python")[1].split("```")[0].strip()
                 elif "```" in llm_code:
                     llm_code = llm_code.split("```")[1].strip()
-                with open(file_name, "w") as f:
-                    f.write(llm_code)
-                logging.info("[Benchmark] ✅ LLM langsung berhasil generate kode untuk: %s", file_name)
-                file_found = True
-            else:
-                with open(file_name, "w") as f:
-                    f.write(f"# ERROR: Semua agent gagal membuat kode untuk task: {task['title']}\n")
-                logging.error("[Benchmark] Semua fallback gagal untuk task: %s", task['level'])
-                
-        # 5. Test di Sandbox DULU — baru push ke GitHub jika LULUS
-        logging.info("[Benchmark] Menguji kode di sandbox sebelum push ke GitHub...")
-        passed = sandbox.test_code(file_name)
-        status = "✅ PASSED" if passed else "❌ FAILED"
-        results.append(f"{task['level']} ({task['title']}): {status}")
+                with open(ag_file, "w") as f:
+                    f.write(f"# Generated by LLM (Antigravity fallback)\n{llm_code}")
+                ag_found = True
 
-        # 6. Push ke GitHub HANYA jika sandbox lulus
-        if passed:
-            logging.info("[Benchmark] Sandbox LULUS. Menyalin kode ke repo dan push ke GitHub...")
-            # Salin file yang sudah lulus ke dalam clone_dir
-            shutil.copy(file_name, os.path.join(clone_dir, file_name))
-            # Pastikan git config ada di repo ini
-            subprocess.run(
-                ["git", "-C", clone_dir, "config", "user.email", "nexus-agent@replit.com"],
-                capture_output=True
+        # ════════════════════════════════════════════════════════════════════
+        # AIDER — jalankan secara independen di repo sendiri
+        # ════════════════════════════════════════════════════════════════════
+        aider_file = f"benchmark_{task['level'].lower()}_aider.py"
+        aider_env = {**os.environ, "GEMINI_API_KEY": gemini_keys[0]}
+        aider_found = False
+
+        if aider_cli_bin:
+            logging.info("[Benchmark] Menjalankan Aider (independen)...")
+            aider_cmd = [
+                aider_cli_bin,
+                "--model", "gemini/gemma-4-31b-it",
+                "--message", (
+                    f"{task_prompt}\n\n"
+                    f"WAJIB: Simpan kode ke file '{aider_file}'. "
+                    "Pastikan file dibuat dan bisa dijalankan."
+                ),
+                "--yes", "--no-auto-commits",
+                aider_file
+            ]
+            aider_res = subprocess.run(
+                aider_cmd, cwd=aider_dir, env=aider_env,
+                capture_output=True, text=True, timeout=300
             )
-            subprocess.run(
-                ["git", "-C", clone_dir, "config", "user.name", "Nexus DualBrain AI"],
-                capture_output=True
-            )
-            subprocess.run(["git", "-C", clone_dir, "add", file_name], capture_output=True)
-            subprocess.run(
-                ["git", "-C", clone_dir, "commit", "-m",
-                 f"feat: add benchmark {task['level']} — sandbox PASSED"],
-                capture_output=True, text=True
-            )
-            # Gunakan HEAD:main agar bisa push bahkan dari repo yang baru di-init manual
-            push_res = subprocess.run(
-                ["git", "-C", clone_dir, "push", "--set-upstream", "origin", "HEAD:main"],
-                capture_output=True, text=True
-            )
-            if push_res.returncode == 0:
-                logging.info("[Auto-Publish] ✅ SUKSES! Kode yang sudah lulus sandbox di-push ke: %s",
-                             full_repo_name)
-                hermes.send_message(
-                    f"✅ Benchmark {task['level']} LULUS sandbox dan di-push ke GitHub!\n"
-                    f"Repo: `{full_repo_name}`"
-                )
+            if os.path.exists(os.path.join(aider_dir, aider_file)):
+                shutil.copy(os.path.join(aider_dir, aider_file), aider_file)
+                aider_found = True
+                logging.info("[Benchmark] ✅ Aider berhasil membuat: %s", aider_file)
             else:
-                logging.error("[Auto-Publish] Gagal git push: %s", push_res.stderr[:300])
-        else:
-            logging.warning(
-                "[Benchmark] ❌ Sandbox GAGAL untuk %s. Kode TIDAK di-push ke GitHub.",
-                task['level']
+                logging.warning("[Benchmark] Aider tidak buat file. "
+                                "Generate via LLM untuk repo Aider...")
+
+        if not aider_found:
+            llm_code = llm.generate_content(
+                f"Write complete, working Python 3.10+ code for:\n\n"
+                f"{task['prompt']}\n\nReturn ONLY raw Python code.",
+                use_codegen_model=True
             )
-            hermes.send_message(
-                f"❌ Benchmark {task['level']} GAGAL sandbox. Kode tidak di-push ke GitHub."
+            if llm_code:
+                if "```python" in llm_code:
+                    llm_code = llm_code.split("```python")[1].split("```")[0].strip()
+                elif "```" in llm_code:
+                    llm_code = llm_code.split("```")[1].strip()
+                with open(aider_file, "w") as f:
+                    f.write(f"# Generated by LLM (Aider fallback)\n{llm_code}")
+                aider_found = True
+
+        # ════════════════════════════════════════════════════════════════════
+        # SANDBOX TEST + PUSH — masing-masing agent independen
+        # ════════════════════════════════════════════════════════════════════
+        for agent_label, file_local, cdir, full_repo in [
+            ("Antigravity", ag_file, ag_dir, full_ag_repo),
+            ("Aider", aider_file, aider_dir, full_aider_repo),
+        ]:
+            if not os.path.exists(file_local):
+                logging.error("[Benchmark] %s: file tidak ada — skip.", agent_label)
+                results.append(
+                    f"{task['level']} [{agent_label}] ({task['title']}): ❌ NO FILE"
+                )
+                continue
+
+            logging.info("[Benchmark] Menguji kode %s di sandbox...", agent_label)
+            passed = sandbox.test_code(file_local)
+            status = "✅ PASSED" if passed else "❌ FAILED"
+            results.append(
+                f"{task['level']} [{agent_label}] ({task['title']}): {status}"
             )
+
+            if passed:
+                logging.info("[Benchmark] %s LULUS. Push ke GitHub...", agent_label)
+                _push_to_repo(cdir, file_local, task['level'], agent_label, full_repo)
+            else:
+                logging.warning("[Benchmark] ❌ %s GAGAL sandbox. Tidak di-push.",
+                                agent_label)
+                hermes.send_message(
+                    f"❌ Benchmark {task['level']} [{agent_label.upper()}] "
+                    f"GAGAL sandbox. Kode tidak di-push."
+                )
+
         
     # Kirim hasil ke user
     result_text = "\n".join(results)
