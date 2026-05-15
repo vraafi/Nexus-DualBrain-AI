@@ -19,7 +19,6 @@ from duckduckgo_search import DDGS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s — %(message)s")
 
-SANDBOX_ENV = os.path.join(os.path.dirname(os.path.dirname(__file__)), "sandbox_env")
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "output", "sandbox_results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
@@ -32,20 +31,9 @@ def load_gemini_client():
     return GeminiClient(keys)
 
 
-def setup_sandbox_env():
-    if not os.path.exists(SANDBOX_ENV):
-        logging.info("Setup sandbox virtualenv...")
-        subprocess.run(["python3", "-m", "venv", SANDBOX_ENV], check=True)
-        pip = os.path.join(SANDBOX_ENV, "bin", "pip")
-        subprocess.run([pip, "install", "requests", "beautifulsoup4", "flake8", "pytest"],
-                       check=True, capture_output=True)
-    return os.path.join(SANDBOX_ENV, "bin", "python")
-
-
 def static_analysis(code_path):
-    flake8 = os.path.join(SANDBOX_ENV, "bin", "flake8")
     try:
-        result = subprocess.run([flake8, code_path, "--max-line-length=120"],
+        result = subprocess.run(["flake8", code_path, "--max-line-length=120"],
                                 capture_output=True, text=True)
         if result.returncode != 0:
             return False, result.stdout
@@ -65,23 +53,24 @@ def search_error(error_msg):
 
 from llm_sandbox import SandboxSession
 
-def run_in_bwrap(python_exe, code_path, timeout_seconds=900):
-    """Eksekusi kode di bwrap sandbox yang terisolasi."""
+def run_in_sandbox(code_path: str) -> tuple:
+    """Run code in llm-sandbox isolated container."""
     try:
-        with SandboxSession(lang="python", keep_template=True) as session:
-            remote_path = f"/workspace/script.py"
-            session.copy(code_path, remote_path)
+        with SandboxSession(lang="python", verbose=False) as session:
+            with open(code_path, "r") as f:
+                code = f.read()
 
-            result = session.execute(f"python {remote_path}")
+            result = session.run(
+                code=code,
+                libraries=["requests", "beautifulsoup4", "pytest"]
+            )
 
-            if result.is_success:
-                return True, result.text, ""
-            else:
-                return False, "", result.text
+            if result.stderr and result.stderr.strip():
+                return False, result.stdout or "", result.stderr
+
+            return True, result.stdout or "", ""
 
     except Exception as e:
-        if 'Timeout' in str(type(e)):
-            return False, "", "TIMEOUT: Eksekusi melebihi batas waktu."
         return False, "", str(e)
 
 
@@ -103,7 +92,6 @@ def fix_code(llm, code, error_output, search_context=""):
 
 
 def test_code(job_id, code_path, max_attempts=7, timeout_minutes=15):
-    python_exe = setup_sandbox_env()
     llm = load_gemini_client()
     timeout_seconds = timeout_minutes * 60
     result_path = os.path.join(RESULTS_DIR, f"{job_id}_result.json")
@@ -137,7 +125,7 @@ def test_code(job_id, code_path, max_attempts=7, timeout_minutes=15):
             continue
 
         # Execute in bwrap
-        success, stdout, stderr = run_in_bwrap(python_exe, tmp_path, timeout_seconds)
+        success, stdout, stderr = run_in_sandbox(tmp_path)
         os.unlink(tmp_path)
 
         if success:
