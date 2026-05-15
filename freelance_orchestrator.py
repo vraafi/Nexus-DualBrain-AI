@@ -30,6 +30,7 @@ from financial_tracker import FinancialTracker
 from circuit_breaker import CircuitBreaker
 from error_learning import ErrorLearningSystem
 from client_memory import ClientMemory
+from difficulty_classifier import DifficultyClassifier
 
 logger = logging.getLogger(__name__)
 
@@ -208,19 +209,35 @@ class FreelanceOrchestrator:
                 try:
                     cb = self.circuit_breakers.get(platform)
 
+                    _difficulty_guard = DifficultyClassifier()
+
                     def run_platform_logic():
                         nonlocal applied
                         if platform == "upwork":
                             jobs = thread_upwork.scrape_jobs()
                             if jobs:
+                                # filter_jobs_batch sudah termasuk DifficultyClassifier (Lapisan 1)
                                 filtered = thread_upwork.filter_jobs_batch(jobs)
                                 for job in filtered[:2]:
                                     if stop.is_set():
                                         break
+                                    # Safety net: cek difficulty sekali lagi sebelum kirim proposal
+                                    diff = _difficulty_guard.classify(job)
+                                    if not diff["allowed"]:
+                                        logger.warning(
+                                            "[Orchestrator] 🚫 SAFETY NET SULIT — skip proposal: %s | Skor: %d",
+                                            job.get("title", "")[:60], diff["score"]
+                                        )
+                                        continue
                                     success = thread_upwork.submit_proposal(job, branding)
                                     if success:
                                         applied += 1
+                                        level = job.get("_difficulty", {}).get("level", "?")
                                         self.finance.log_proposal("upwork", job.get("title"), 50.0)
+                                        logger.info(
+                                            "[Orchestrator] ✅ Proposal terkirim [%s]: %s",
+                                            level, job.get("title", "")[:60]
+                                        )
                                     time.sleep(30)
 
                         elif platform == "fiverr":
