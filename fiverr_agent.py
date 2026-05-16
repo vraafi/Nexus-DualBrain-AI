@@ -123,7 +123,7 @@ class FiverrAgent:
             f"Login ke Fiverr di https://www.fiverr.com/login. "
             f"Email: {creds['username']}. Password: {creds['password']}. "
             f"Setelah login berhasil, konfirmasi dengan melihat dashboard seller.",
-            max_steps=12
+            max_steps=7
         )
         if "FAILED" in result:
             logger.error("[Fiverr] Login error.")
@@ -141,7 +141,7 @@ class FiverrAgent:
             "Buka https://www.fiverr.com/orders/manage_orders. "
             "List semua order yang statusnya 'In Progress' atau aktif. "
             "Return JSON: [{order_id, buyer_name, title, deadline, url}, ...]",
-            max_steps=15
+            max_steps=8
         )
         try:
             match = __import__('re').search(r'\[.*?\]', result, __import__('re').DOTALL)
@@ -165,7 +165,7 @@ class FiverrAgent:
             f"Buka url order Fiverr ini: {order['url']}. "
             f"Ambil requirement atau pesan dari buyer. "
             f"Return plain text yang berisi pesan dari buyer.",
-            max_steps=10
+            max_steps=6
         )
         if "FAILED" not in result:
             order["description"] = result
@@ -177,7 +177,7 @@ class FiverrAgent:
             f"Buka halaman order Fiverr: {order.get('url')}. "
             f"Ketik pesan ini di chat box: {message}. "
             f"Klik tombol kirim pesan.",
-            max_steps=15
+            max_steps=8
         )
         return "FAILED" not in result
 
@@ -192,7 +192,7 @@ class FiverrAgent:
             f"Upload file dari path: {file_path}. "
             f"Tulis pesan delivery: {delivery_message[:200]}. "
             f"Klik Submit.",
-            max_steps=20
+            max_steps=10
         )
         return "FAILED" not in result
 
@@ -204,7 +204,7 @@ class FiverrAgent:
             "Buka dashboard seller Fiverr dan buka halaman Manage Gigs. "
             "Hitung jumlah gig yang berstatus 'Active'. "
             "Return JSON: {count: int}",
-            max_steps=15
+            max_steps=8
         )
         try:
             match = __import__('re').search(r'\{.*?\}', result, __import__('re').DOTALL)
@@ -309,7 +309,7 @@ class FiverrAgent:
             "Buka https://www.fiverr.com/gigs/new. "
             "Pastikan halaman 'Overview' atau 'Create a New Gig' sudah terbuka. "
             "Konfirmasi dengan menyebut title atau elemen halaman yang terlihat.",
-            max_steps=8
+            max_steps=5
         )
         if "FAILED" in step1:
             logger.error("[Fiverr] Gagal navigasi ke Create Gig.")
@@ -325,7 +325,7 @@ class FiverrAgent:
             f"2. Pilih Category: 'Programming & Tech'\n"
             f"3. Tambahkan tags: {tags_str}\n"
             f"Setelah semua terisi, klik tombol 'Save & Continue'.",
-            max_steps=15
+            max_steps=8
         )
         if "FAILED" in step2:
             logger.error("[Fiverr] Gagal isi Overview.")
@@ -351,7 +351,7 @@ class FiverrAgent:
             f"harga ${premium.get('price', 90)}, "
             f"delivery {premium.get('days', 3)} hari\n"
             f"Klik 'Save & Continue'.",
-            max_steps=20
+            max_steps=10
         )
         if "FAILED" in step3:
             logger.error("[Fiverr] Gagal isi Pricing.")
@@ -365,7 +365,7 @@ class FiverrAgent:
             f"(salin persis, tidak perlu tambahan apapun):\n"
             f"'{description[:1000]}'\n"
             f"Klik 'Save & Continue'.",
-            max_steps=15
+            max_steps=8
         )
         if "FAILED" in step4:
             logger.error("[Fiverr] Gagal isi Description.")
@@ -382,7 +382,7 @@ class FiverrAgent:
             f"Pastikan tipe pertanyaan adalah 'Free Text'. "
             f"Tandai sebagai 'Required'. "
             f"Klik 'Save & Continue'.",
-            max_steps=12
+            max_steps=7
         )
         if "FAILED" in step5:
             logger.warning("[Fiverr] Gagal isi Requirements, lanjut ke Gallery.")
@@ -395,7 +395,7 @@ class FiverrAgent:
             f"Tunggu sampai upload selesai. "
             f"Klik tombol 'Save & Continue' atau 'Publish'. "
             f"Jika ada preview/publish button, klik untuk mempublikasikan gig.",
-            max_steps=20
+            max_steps=10
         )
         if "FAILED" in step6:
             logger.error("[Fiverr] Gagal upload gallery/publish.")
@@ -430,6 +430,6 @@ class FiverrAgent:
             "Buka https://www.fiverr.com/users/selling/buyer_requests. "
             "Cari request dari buyer. Jika ada, buat offer singkat yang profesional (max 100 kata) "
             "dan kirim offer tersebut. Return 'BERHASIL' jika mengirim offer, atau 'TIDAK_ADA' jika kosong.",
-            max_steps=20
+            max_steps=10
         )
         return "BERHASIL" in result

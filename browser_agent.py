@@ -362,7 +362,7 @@ class BrowserAgent:
         """Initialize Browser-Use browser — no-op karena Browser-Use auto-manage."""
         logger.info("[BrowserAgent] Browser-Use ready (auto-managed lifecycle).")
 
-    def execute_task(self, task: str, max_steps: int = 20, _retry_count: int = 0) -> str:
+    def execute_task(self, task: str, max_steps: int = 10, _retry_count: int = 0) -> str:
         """
         Metode utama: jalankan task natural language via Browser-Use.
 
@@ -459,7 +459,7 @@ class BrowserAgent:
         """Navigate ke URL — backward compat wrapper."""
         result = self.execute_task(
             f"Buka URL ini dan tunggu sampai halaman selesai load: {url}",
-            max_steps=5
+            max_steps=3
         )
         time.sleep(2)
         return "FAILED" not in result
@@ -476,7 +476,7 @@ class BrowserAgent:
 
         result = self.execute_task(
             f"Klik pada elemen ini: {desc}",
-            max_steps=8
+            max_steps=5
         )
         return "FAILED" not in result
 
@@ -489,7 +489,7 @@ class BrowserAgent:
 
         result = self.execute_task(
             f"Ketik teks berikut ke dalam field '{desc}': {text}",
-            max_steps=8
+            max_steps=5
         )
         return "FAILED" not in result
 
@@ -497,13 +497,13 @@ class BrowserAgent:
         """Ambil teks dari halaman saat ini."""
         task = f"Ambil semua teks yang terlihat dari halaman {url}" if url else \
                "Ambil semua teks yang terlihat dari halaman yang sedang terbuka"
-        return self.execute_task(task, max_steps=5)
+        return self.execute_task(task, max_steps=3)
 
     def screenshot(self, path: str = "screenshot.jpg") -> bool:
         """Screenshot halaman saat ini."""
         result = self.execute_task(
             f"Ambil screenshot halaman dan simpan ke {path}",
-            max_steps=3
+            max_steps=2
         )
         return "FAILED" not in result
 
@@ -541,7 +541,7 @@ class BrowserAgent:
                     "Lihat URL halaman yang sedang terbuka sekarang. "
                     "Apakah halaman ini adalah dashboard/beranda akun (bukan halaman login "
                     "atau captcha)? Jawab hanya 'YES' atau 'NO'.",
-                    max_steps=3
+                    max_steps=2
                 )
                 if "YES" in check.upper():
                     logger.info(

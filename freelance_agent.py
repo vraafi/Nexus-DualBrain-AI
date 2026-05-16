@@ -45,7 +45,7 @@ class FreelanceAgent:
             "PENTING: Abaikan nama URL karena Upwork sering mengganti path. "
             "Fokus hanya pada elemen visual. "
             "Jawab hanya 'LOGGED_IN' atau 'NOT_LOGGED_IN'.",
-            max_steps=5
+            max_steps=3
         )
         return "LOGGED_IN" in result
 
@@ -72,7 +72,7 @@ class FreelanceAgent:
             f"BERHENTI dan kembalikan teks 'NEEDS_HUMAN'. "
             f"Jika berhasil masuk dan melihat halaman akun freelancer, "
             f"kembalikan teks 'LOGIN_SUCCESS'.",
-            max_steps=20
+            max_steps=10
         )
 
         # Jika agent mendeteksi perlu bantuan manusia (CAPTCHA/2FA)

@@ -47,7 +47,7 @@ class PaymentVerifier:
             "Atau buka https://www.upwork.com/ab/payments/reports/billing-history. "
             "List semua transaksi payment yang berhasil dalam 30 hari terakhir. "
             "Return JSON: [{title, amount, date, status}, ...]",
-            max_steps=15
+            max_steps=8
         )
 
         paid_count = 0
@@ -82,7 +82,7 @@ class PaymentVerifier:
             "Atau buka halaman 'Revenues' atau 'Earnings' di Fiverr seller dashboard. "
             "List order yang statusnya 'Cleared' atau sudah dibayarkan. "
             "Return JSON: [{order_id, title, amount, status}, ...]",
-            max_steps=15
+            max_steps=8
         )
 
         paid_count = 0
@@ -117,7 +117,7 @@ class PaymentVerifier:
             "Atau navigasi ke Financial > Payment History di Freelancer.com. "
             "List semua pembayaran yang sudah diterima dalam 30 hari terakhir. "
             "Return JSON: [{project_title, amount, status, date}, ...]",
-            max_steps=15
+            max_steps=8
         )
 
         paid_count = 0

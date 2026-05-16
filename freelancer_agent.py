@@ -34,7 +34,7 @@ class FreelancerAgent:
             f"Login ke Freelancer di https://www.freelancer.com/login. "
             f"Email: {creds['username']}. Password: {creds['password']}. "
             f"Setelah login, pastikan berhasil masuk ke dashboard.",
-            max_steps=12
+            max_steps=7
         )
         if "FAILED" in result:
             logger.error("[Freelancer] Login error.")
@@ -52,7 +52,7 @@ class FreelancerAgent:
             "Buka https://www.freelancer.com/jobs. "
             "Scrape 5 job pertama. "
             "Return JSON: [{job_id, title, description, rate, url}, ...]",
-            max_steps=15
+            max_steps=8
         )
         try:
             import re
@@ -141,7 +141,7 @@ class FreelancerAgent:
             f"Klik tombol Bid. "
             f"Isi cover letter/proposal dengan teks ini: {cover_letter[:400]}. "
             f"Submit bid tersebut.",
-            max_steps=20
+            max_steps=10
         )
 
         if "FAILED" not in result:
@@ -160,7 +160,7 @@ class FreelancerAgent:
             "Buka https://www.freelancer.com/manage. "
             "List 3 project/kontrak yang sedang aktif berjalan. "
             "Return JSON: [{job_id, title, url}, ...]",
-            max_steps=15
+            max_steps=8
         )
         try:
             import re
@@ -205,7 +205,7 @@ class FreelancerAgent:
             f"Buka project Freelancer: {project_url}. "
             f"Upload file hasil kerja dari path: {file_path}. "
             f"Kirim pesan chat ke klien dengan teks ini: {delivery_msg[:300]}.",
-            max_steps=20
+            max_steps=10
         )
 
         if "FAILED" in msg_result:
@@ -222,7 +222,7 @@ class FreelancerAgent:
             f"Jika ada form konfirmasi atau dialog, isi dengan pesan singkat: "
             f"'Work completed as per requirements. Please review and release payment.' "
             f"Konfirmasi submission.",
-            max_steps=20
+            max_steps=10
         )
 
         if "FAILED" in milestone_result:

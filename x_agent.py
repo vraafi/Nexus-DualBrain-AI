@@ -213,7 +213,7 @@ class XAgent:
         result = self.browser.execute_task(
             f"Buka https://x.com/home. Scroll pelan-pelan ke bawah beberapa kali, lalu like 2-3 post acak. "
             f"Habiskan waktu sekitar {duration_seconds} detik.",
-            max_steps=20
+            max_steps=10
         )
 
         if "FAILED" not in result:
@@ -245,7 +245,7 @@ class XAgent:
             "Buka X (Twitter) di https://x.com/search?q=need+python+developer&f=live. "
             "Temukan 5 tweet relevan dari orang yang mencari developer Python. "
             "Return JSON: [{tweet_url, username, tweet_text}, ...]",
-            max_steps=15
+            max_steps=8
         )
 
         try:
@@ -312,7 +312,7 @@ class XAgent:
                     f"Buka tweet URL ini: {tweet.get('tweet_url')}. "
                     f"Klik tombol reply, ketik teks ini: {reply_text}. "
                     f"Klik post.",
-                    max_steps=15
+                    max_steps=8
                 )
 
                 if "FAILED" not in reply_result:
@@ -358,7 +358,7 @@ class XAgent:
             f"Buka https://x.com/home. Klik input tweet baru. "
             f"Ketik teks ini: {news_tweet}. "
             f"Klik Post.",
-            max_steps=15
+            max_steps=8
         )
 
         if "FAILED" not in result:
