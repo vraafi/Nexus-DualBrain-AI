@@ -1,0 +1,242 @@
+(venv) user001@DESKTOP-BKR2PJ9:~/Nexus-DualBrain-AI$ python3 main.py
+INFO     [root] ============================================================
+INFO     [root] Nexus DualBrain AI — Autonomous Freelance Agent
+INFO     [root] ============================================================
+INFO     [root] ✅ Hermes Agent (skills, memory, Telegram) : AKTIF
+INFO     [root] ✅ Antigravity (autonomous local coding)   : AKTIF
+INFO     [root] ✅ Aider (fallback coding agent)           : AKTIF
+INFO     [root] ✅ GitHub CLI (issue/PR management)       : AKTIF
+INFO     [root] ℹ️  Hermes CLI (optional, extra features)  : tidak terinstall
+INFO     [root] ============================================================
+INFO     [hermes_agent] [Hermes] Mode fallback: Telegram direct (HERMES_API_KEY tidak di-set)
+INFO     [skill_library] [SkillLibrary] Inisialisasi selesai. DB: /home/user001/Nexus-DualBrain-AI/output/skill_library.db
+INFO     [self_improver] [SelfImprover] AGI self-reflection engine aktif.
+INFO     [root] Retrieving branding strategy for upwork...
+INFO     [root] Strategy applied: Problem Solver Professional
+INFO     [root] Retrieving branding strategy for fiverr...
+INFO     [root] Strategy applied: Productized Service
+INFO     [root] Retrieving branding strategy for freelancer...
+INFO     [root] Strategy applied: Professional Freelancer & Senior Engineer
+INFO     [hermes_agent] [Hermes] Command listener aktif.
+INFO     [root] ♻️ Recovered task 07a0f79c-8d97-4cf0-bf90-05c60efcf288 at step: inbox_monitor_phase
+INFO     [browser_agent] [BrowserAgent] Mode: Browser-Use (LLM-driven, retry enabled)
+INFO     [browser_agent] [BrowserAgent] Browser-Use ready (auto-managed lifecycle).
+INFO     [freelance_agent] Initiating Upwork login sequence via Browser-Use...
+INFO     [root] Credential dimuat untuk upwork (User: ema...da)
+INFO     [browser_agent] [BrowserAgent] Menunggu giliran (antrian browser)...
+INFO     [browser_agent] [BrowserAgent] Giliran dapat, memulai task.
+INFO     [browser_agent] [BrowserAgent] Brave CDP aktif di: http://172.24.48.1:9222
+INFO     [browser_agent] [BrowserAgent] Menggunakan Brave via CDP: http://172.24.48.1:9222
+INFO     [browser_agent] [BrowserAgent] Singleton browser siap (keep_alive=True).
+INFO     [service] Using anonymized telemetry, see https://docs.browser-use.com/development/monitoring/telemetry.
+INFO     [Agent] 🔗 Found URL in task: https://www.upwork.com, adding as initial action...
+INFO     [Agent] 🎯 Task: Buka https://www.upwork.com dan cek apakah sudah login (ada avatar user atau dashboard). Jawab hanya 'LOGGED_IN' atau 'NOT_LOGGED_IN'
+INFO     [Agent] Starting a browser-use agent with version 0.12.6, with provider=google and model=gemini-2.0-flash
+INFO     [Agent]   ▶️   navigate: url: https://www.upwork.com, new_tab: False
+WARNING  [BrowserSession] ⚠️ Page readiness timeout (8.0s, 8571ms) for https://www.upwork.com
+INFO     [tools] 🔗 Navigated to https://www.upwork.com
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 1:
+WARNING  [Agent] ❌ Result failed 1/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 2:
+WARNING  [Agent] ❌ Result failed 2/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 3:
+WARNING  [Agent] ❌ Result failed 3/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 4:
+WARNING  [Agent] ❌ Result failed 4/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 5:
+INFO     [Agent] 📋 Exploration nudge injected after 5 steps without a plan
+WARNING  [Agent] ❌ Result failed 5/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 6:
+INFO     [Agent] 📋 Exploration nudge injected after 6 steps without a plan
+INFO     [Agent] 🔁 Loop detection nudge injected (repetition=0, stagnation=5)
+ERROR    [Agent] ❌ Result failed 6/6 times: items
+ERROR    [Agent] ❌ Stopping due to 5 consecutive failures
+INFO     [Agent]
+INFO     [Agent] Did the Agent not work as expected? Let us fix this!
+INFO     [Agent]    Open a short issue on GitHub: https://github.com/browser-use/browser-use/issues
+INFO     [browser_agent] [BrowserAgent] Menunggu giliran (antrian browser)...
+INFO     [browser_agent] [BrowserAgent] Giliran dapat, memulai task.
+INFO     [Agent] 🔗 Found URL in task: https://www.upwork.com/ab/account-security/login, adding as initial action...
+INFO     [Agent] 🎯 Task: Login ke Upwork di https://www.upwork.com/ab/account-security/login. Email: email_anda. Password: password_anda. Jika ada CAPTCHA atau 2FA, tunggu dan coba lagi. Konfirmasi berhasil login dengan melihat dashboard Upwork.
+INFO     [Agent] Starting a browser-use agent with version 0.12.6, with provider=google and model=gemini-2.0-flash
+INFO     [Agent]   ▶️   navigate: url: https://www.upwork.com/ab/account-security/login, new_tab: False
+WARNING  [BrowserSession] ⚠️ Page readiness timeout (3.0s, 3575ms) for https://www.upwork.com/ab/account-security/login
+INFO     [tools] 🔗 Navigated to https://www.upwork.com/ab/account-security/login
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 1:
+WARNING  [Agent] ❌ Result failed 1/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 2:
+WARNING  [Agent] ❌ Result failed 2/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 3:
+WARNING  [Agent] ❌ Result failed 3/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 4:
+WARNING  [Agent] ❌ Result failed 4/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 5:
+INFO     [Agent] 📋 Exploration nudge injected after 5 steps without a plan
+WARNING  [Agent] ❌ Result failed 5/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 6:
+INFO     [Agent] 📋 Exploration nudge injected after 6 steps without a plan
+INFO     [Agent] 🔁 Loop detection nudge injected (repetition=0, stagnation=5)
+ERROR    [Agent] ❌ Result failed 6/6 times: items
+ERROR    [Agent] ❌ Stopping due to 5 consecutive failures
+INFO     [Agent]
+INFO     [Agent] Did the Agent not work as expected? Let us fix this!
+INFO     [Agent]    Open a short issue on GitHub: https://github.com/browser-use/browser-use/issues
+ERROR    [freelance_agent] Upwork login failed or manual intervention required.
+INFO     [browser_agent] [BrowserAgent] Menunggu giliran (antrian browser)...
+INFO     [browser_agent] [BrowserAgent] Giliran dapat, memulai task.
+INFO     [Agent] 🔗 Found URL in task: https://www.google.com, adding as initial action...
+INFO     [Agent] 🎯 Task: Buka URL ini dan tunggu sampai halaman selesai load: https://www.google.com
+INFO     [Agent] Starting a browser-use agent with version 0.12.6, with provider=google and model=gemini-2.0-flash
+INFO     [Agent]   ▶️   navigate: url: https://www.google.com, new_tab: False
+WARNING  [BrowserSession] ⚠️ Page readiness timeout (8.0s, 8295ms) for https://www.google.com
+INFO     [tools] 🔗 Navigated to https://www.google.com
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 1:
+WARNING  [Agent] ❌ Result failed 1/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 2:
+WARNING  [Agent] ❌ Result failed 2/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 3:
+WARNING  [Agent] ❌ Result failed 3/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 4:
+WARNING  [Agent] ❌ Result failed 4/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 5:
+INFO     [Agent] 📋 Exploration nudge injected after 5 steps without a plan
+WARNING  [Agent] ❌ Result failed 5/6 times: items
+INFO     [Agent]
+
+INFO     [Agent] 📍 Step 6:
+INFO     [Agent] 📋 Exploration nudge injected after 6 steps without a plan
+INFO     [Agent] 🔁 Loop detection nudge injected (repetition=0, stagnation=5)
+ERROR    [Agent] ❌ Result failed 6/6 times: items
+ERROR    [Agent] ❌ Stopping due to 5 consecutive failures
+INFO     [Agent]
+INFO     [Agent] Did the Agent not work as expected? Let us fix this!
+INFO     [Agent]    Open a short issue on GitHub: https://github.com/browser-use/browser-use/issues
+INFO     [browser_agent] [BrowserAgent] Mode: Browser-Use (LLM-driven, retry enabled)
+INFO     [browser_agent] [BrowserAgent] Browser-Use ready (auto-managed lifecycle).
+ERROR    [root] ❌ Workflow Error: table recovery_strategies has no column named last_updated
+INFO     [root] Cooldown 1800 detik...
+INFO     [root] [PaymentVerifier] Memulai verifikasi pembayaran harian...
+INFO     [browser_agent] [BrowserAgent] Mode: Browser-Use (LLM-driven, retry enabled)
+INFO     [browser_agent] [BrowserAgent] Browser-Use ready (auto-managed lifecycle).
+INFO     [payment_verifier] [PaymentVerifier] Memulai verifikasi pembayaran semua platform...
+INFO     [payment_verifier] [PaymentVerifier] Mengecek Upwork transactions...
+INFO     [browser_agent] [BrowserAgent] Menunggu giliran (antrian browser)...
+INFO     [browser_agent] [BrowserAgent] Giliran dapat, memulai task.
+INFO     [Agent] 🎯 Task: Buka https://www.upwork.com/nx/payments/reports/overview. Atau buka https://www.upwork.com/ab/payments/reports/billing-history. List semua transaksi payment yang berhasil dalam 30 hari terakhir. Return JSON: [{title, amount, date, status}, ...]
+INFO     [Agent] Starting a browser-use agent with version 0.12.6, with provider=google and model=gemini-2.0-flash
+WARNING  [BrowserSession] Failed to remove highlights:
+WARNING  [bubus] ⚠️ EventBus_0452058d🟢(⏳ 0 | ▶️ 2 | ✅ 48 ➡️ 31 👂) handler browser_use.browser.watchdog_base.DOMWatchdog.on_BrowserStateRequestEvent() has been running for >15s on event. Possible slow processing or deadlock.
+(handler could be trying to await its own result or could be blocked by another async task).
+browser_use.browser.watchdog_base.DOMWatchdog.on_BrowserStateRequestEvent(?▶ BrowserStateRequestEvent#fbb0 🏃)
+WARNING  [bubus] ⚠️ EventBus_0452058d🟢(⏳ 0 | ▶️ 2 | ✅ 48 ➡️ 31 👂) handler browser_use.browser.watchdog_base.ScreenshotWatchdog.on_ScreenshotEvent() has been running for >15s on event. Possible slow processing or deadlock.
+(handler could be trying to await its own result or could be blocked by another async task).
+browser_use.browser.watchdog_base.ScreenshotWatchdog.on_ScreenshotEvent(?▶ ScreenshotEvent#64f6 🏃)
+WARNING  [bubus] ================================================================================
+WARNING  [bubus] ⏱️  TIMEOUT ERROR - Handling took more than 15.0s for EventBus_0452058d.browser_use.browser.watchdog_base.ScreenshotWatchdog.on_ScreenshotEvent(?▶ ScreenshotEvent#64f6 ✅)
+WARNING  [bubus] ================================================================================
+WARNING  [bubus] 📣 BrowserStateRequestEvent#fbb0                                       23s
+WARNING  [bubus]    ☑️ browser_use.browser.watchdog_base.DownloadsWatchdog.on_BrowserStateRequestEvent(#fbb0)     3s/30s   ✓
+WARNING  [bubus]       📣 NavigationCompleteEvent#2210                                  15s
+WARNING  [bubus]          ☑️ browser_use.browser.watchdog_base.DownloadsWatchdog.on_NavigationCompleteEvent(#2210)     0s/30s   ✓
+WARNING  [bubus]          ☑️ browser_use.browser.watchdog_base.SecurityWatchdog.on_NavigationCompleteEvent(#2210)     0s/30s   ✓
+WARNING  [bubus]    ➡️ browser_use.browser.watchdog_base.DOMWatchdog.on_BrowserStateRequestEvent(#fbb0) ⏳ 20s/30s
+WARNING  [bubus]       📣 ScreenshotEvent#64f6                                          15s
+WARNING  [bubus]          ⏰ browser_use.browser.watchdog_base.ScreenshotWatchdog.on_ScreenshotEvent(#64f6) ⌛️ 15s/15s   ⬅️ TIMEOUT HERE ⏰
+WARNING  [bubus]
+================================================================================
+
+WARNING  [BrowserSession] 📸 Clean screenshot timed out after 6 seconds - no handler registered or slow page?
+ERROR    [BrowserSession] Exception in background task [capture_screenshot]: TimeoutError: Event handler browser_use.browser.watchdog_base.ScreenshotWatchdog.on_ScreenshotEvent#9744(?▶ ScreenshotEvent#64f6 🏃) timed out after 15.0s
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/browser_use/browser/watchdog_base.py", line 153, in unique_handler
+    result = await actual_handler(event)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/browser_use/observability.py", line 73, in async_wrapper
+    return await func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/browser_use/browser/watchdogs/screenshot_watchdog.py", line 78, in on_ScreenshotEvent
+    result = await cdp_session.cdp_client.send.Page.captureScreenshot(params=params, session_id=cdp_session.session_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/cdp_use/cdp/page/library.py", line 137, in captureScreenshot
+    await self._client.send_raw(
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/cdp_use/client.py", line 389, in send_raw
+    return await future
+           ^^^^^^^^^^^^
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/bubus/service.py", line 1128, in execute_handler
+    result_value: Any = await asyncio.wait_for(handler_task, timeout=event_result.timeout)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
+    async with timeouts.timeout(timeout):
+  File "/usr/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/browser_use/utils.py", line 401, in wrapper
+    result = await func(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/browser_use/observability.py", line 73, in async_wrapper
+    return await func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/browser_use/browser/watchdogs/dom_watchdog.py", line 700, in _capture_clean_screenshot
+    screenshot_b64 = await screenshot_event.event_result(raise_if_any=True, raise_if_none=True)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/bubus/models.py", line 574, in event_result
+    valid_results = await self.event_results_filtered(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/bubus/models.py", line 516, in event_results_filtered
+    raise original_error
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/bubus/models.py", line 490, in event_results_filtered
+    await event_result
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/bubus/models.py", line 889, in wait_for_handler_to_complete_and_return_result
+    raise self.error if isinstance(self.error, BaseException) else Exception(self.error)  # pyright: ignore[reportUnnecessaryIsInstance]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/bubus/service.py", line 1070, in _execute_handlers
+    await self.execute_handler(event, handler, timeout=timeout)
+  File "/home/user001/Nexus-DualBrain-AI/venv/lib/python3.12/site-packages/bubus/service.py", line 1194, in execute_handler
+    raise handler_timeout_error from e
+TimeoutError: Event handler browser_use.browser.watchdog_base.ScreenshotWatchdog.on_ScreenshotEvent#9744(?▶ ScreenshotEvent#64f6 🏃) timed out after 15.0s

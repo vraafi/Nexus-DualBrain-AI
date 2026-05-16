@@ -26,6 +26,29 @@ class FreelanceAgent:
         self.identity = IdentityManager()
         self.logger = logging.getLogger(__name__)
 
+    def _is_upwork_logged_in(self) -> bool:
+        """
+        Cek status login Upwork secara robust — TIDAK bergantung pada nama halaman
+        atau URL spesifik karena Upwork sering mengganti nama/path halaman mereka.
+
+        Strategi deteksi berbasis konten visual (bukan URL/nama):
+        - Ada elemen navigasi akun (avatar, menu profil, tombol pesan)
+        - URL TIDAK mengandung kata kunci halaman auth ("login", "signup", "auth")
+        - Halaman berisi konten member-only (job feed, kontrak, dll)
+        """
+        result = self.browser.execute_task(
+            "Buka https://www.upwork.com kemudian periksa halaman ini. "
+            "Apakah kamu melihat salah satu dari ini: "
+            "(1) foto profil / avatar pengguna di pojok kanan atas, "
+            "(2) menu navigasi dengan 'Find Work' atau 'My Jobs' atau 'Messages', "
+            "(3) halaman beranda freelancer yang personal (bukan landing page publik). "
+            "PENTING: Abaikan nama URL karena Upwork sering mengganti path. "
+            "Fokus hanya pada elemen visual. "
+            "Jawab hanya 'LOGGED_IN' atau 'NOT_LOGGED_IN'.",
+            max_steps=5
+        )
+        return "LOGGED_IN" in result
+
     def login_upwork(self) -> bool:
         self.logger.info("Initiating Upwork login sequence via Browser-Use...")
         creds = self.identity.get_credential("upwork")
@@ -33,30 +56,52 @@ class FreelanceAgent:
             self.logger.error("No Upwork credentials found in Identity Vault.")
             return False
 
-        check_result = self.browser.execute_task(
-            "Buka https://www.upwork.com dan cek apakah sudah login "
-            "(ada avatar user atau dashboard). "
-            "Jawab hanya 'LOGGED_IN' atau 'NOT_LOGGED_IN'",
-            max_steps=5
-        )
-        if "LOGGED_IN" in check_result:
-            self.logger.info("Upwork sudah terdeteksi login.")
+        # Cek apakah sudah login (deteksi berbasis visual, bukan URL/nama halaman)
+        if self._is_upwork_logged_in():
+            self.logger.info("Upwork sudah terdeteksi login (visual check).")
             return True
 
+        # Coba login otomatis — arahkan ke halaman login utama Upwork
+        # (bukan URL spesifik yang bisa berubah sewaktu-waktu)
         result = self.browser.execute_task(
-            f"Login ke Upwork di https://www.upwork.com/ab/account-security/login. "
-            f"Email: {creds['username']}. Password: {creds['password']}. "
-            f"Jika ada CAPTCHA atau 2FA, tunggu dan coba lagi. "
-            f"Konfirmasi berhasil login dengan melihat dashboard Upwork.",
-            max_steps=15
+            f"Buka https://www.upwork.com dan cari tombol atau link untuk login/masuk. "
+            f"Klik tombol login tersebut, lalu masukkan: "
+            f"Email: {creds['username']} dan Password: {creds['password']}. "
+            f"Setelah submit, tunggu halaman selesai load. "
+            f"Jika muncul CAPTCHA, verifikasi gambar, atau kode 2FA — "
+            f"BERHENTI dan kembalikan teks 'NEEDS_HUMAN'. "
+            f"Jika berhasil masuk dan melihat halaman akun freelancer, "
+            f"kembalikan teks 'LOGIN_SUCCESS'.",
+            max_steps=20
         )
 
-        if "FAILED" in result or ("dashboard" not in result.lower() and "find work" not in result.lower()):
-            self.logger.error("Upwork login failed or manual intervention required.")
+        # Jika agent mendeteksi perlu bantuan manusia (CAPTCHA/2FA)
+        if "NEEDS_HUMAN" in result or "FAILED" in result:
+            self.logger.warning(
+                "Login Upwork memerlukan intervensi manual (CAPTCHA/2FA/perubahan halaman). "
+                "Silakan login manual di browser."
+            )
+            # Tunggu hingga 15 menit sambil polling — cek setiap 30 detik
+            human_done = self.browser.request_human_help(
+                reason="Login Upwork: CAPTCHA/2FA/perubahan halaman login terdeteksi",
+                max_wait=900,
+                poll_interval=30
+            )
+            if human_done:
+                # Verifikasi sekali lagi setelah intervensi manual
+                if self._is_upwork_logged_in():
+                    self.logger.info("Upwork login berhasil setelah intervensi manual.")
+                    return True
+            self.logger.error("Upwork login gagal setelah menunggu intervensi manual.")
             return False
 
-        self.logger.info("Upwork login sequence completed.")
-        return True
+        # Verifikasi visual setelah login otomatis (tidak bergantung teks respons agent)
+        if self._is_upwork_logged_in():
+            self.logger.info("Upwork login sequence completed (verified visual).")
+            return True
+
+        self.logger.error("Upwork login failed — halaman tidak menunjukkan status login.")
+        return False
 
     def scrape_jobs(self) -> list:
         self.logger.info("Scraping Python/Automation jobs from Upwork via Browser-Use...")

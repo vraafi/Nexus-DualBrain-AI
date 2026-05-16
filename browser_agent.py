@@ -11,6 +11,11 @@ Serialization fix:
   Pattern ini dipakai ribuan pengguna di GitHub:
   https://github.com/browser-use/browser-use/issues/3718
   https://github.com/browser-use/browser-use/issues/2840
+
+Model fix:
+  Menggunakan model dari llm_config.py (bukan hardcode gemini-2.0-flash).
+  Browser-use memakai DEFAULT_LLM_MODEL (gemma-4-31b-it) sebagai utama,
+  fallback ke NEGOTIATION_MODEL (gemma-4-26b-a4b-it) jika gagal.
 """
 import asyncio
 import gc
@@ -29,6 +34,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from browser_use import Agent, Browser, BrowserProfile
 from pydantic import Field, SecretStr
 from langchain_google_genai import ChatGoogleGenerativeAI
+
+from llm_config import DEFAULT_LLM_MODEL, NEGOTIATION_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -311,12 +318,18 @@ class BrowserAgent:
         self._headless = headless
         self.logger = logging.getLogger(__name__)
 
-        # Setup LLM untuk Browser-Use (Gemini)
-        # Menggunakan GeminiForBrowserUse (subclass) agar atribut 'provider'
-        # tersedia dan tidak menyebabkan AttributeError di browser-use.
+        # Setup LLM untuk Browser-Use — model diambil dari llm_config.py
+        # DEFAULT_LLM_MODEL = gemma-4-31b-it (utama, 1500 RPD)
+        # NEGOTIATION_MODEL = gemma-4-26b-a4b-it (fallback)
+        # TIDAK menggunakan gemini-2.0-flash yang tidak ada dalam konfigurasi.
         gemini_key = os.environ.get("GEMINI_KEY_1", "")
         self._bu_llm = GeminiForBrowserUse(
-            model="gemini-2.0-flash",
+            model=DEFAULT_LLM_MODEL,
+            api_key=SecretStr(gemini_key) if gemini_key else None,
+            temperature=0.1,
+        )
+        self._bu_llm_fallback = GeminiForBrowserUse(
+            model=NEGOTIATION_MODEL,
             api_key=SecretStr(gemini_key) if gemini_key else None,
             temperature=0.1,
         )
@@ -375,10 +388,10 @@ class BrowserAgent:
             "NoneType.*send",
         )
 
-        async def _run_task(browser: Browser):
+        async def _run_task(browser: Browser, llm):
             agent = Agent(
                 task=task,
-                llm=self._bu_llm,
+                llm=llm,
                 browser=browser,
                 max_steps=max_steps,
             )
@@ -390,10 +403,21 @@ class BrowserAgent:
         logger.info("[BrowserAgent] Menunggu giliran (antrian browser)...")
         with _BROWSER_LOCK:
             logger.info("[BrowserAgent] Giliran dapat, memulai task.")
+            # Attempt 1-2 pakai DEFAULT_LLM_MODEL, attempt 3 fallback NEGOTIATION_MODEL
+            llm_per_attempt = [
+                self._bu_llm,
+                self._bu_llm,
+                self._bu_llm_fallback,
+            ]
             for attempt in range(MAX_RETRIES):
                 try:
                     browser = _get_shared_browser(proxy=self.proxy)
-                    result = self._run(_run_task(browser))
+                    active_llm = llm_per_attempt[attempt]
+                    logger.info(
+                        "[BrowserAgent] Pakai model: %s (attempt %d/%d)",
+                        active_llm.model, attempt + 1, MAX_RETRIES
+                    )
+                    result = self._run(_run_task(browser, active_llm))
                     if "FAILED" not in result:
                         return result
                     if attempt < MAX_RETRIES - 1:
@@ -487,11 +511,58 @@ class BrowserAgent:
         """Navigasi ke halaman netral."""
         self.navigate("https://www.google.com")
 
-    def request_human_help(self, reason: str = "Butuh bantuan"):
-        """Request human intervention untuk CAPTCHA/2FA."""
-        logger.warning("[BrowserAgent] Human help needed: %s", reason)
-        logger.warning("[BrowserAgent] Menunggu 60 detik untuk intervensi manual...")
-        time.sleep(60)
+    def request_human_help(self, reason: str = "Butuh bantuan",
+                           max_wait: int = 900, poll_interval: int = 30) -> bool:
+        """
+        Request human intervention untuk CAPTCHA/2FA/login manual.
+
+        Menunggu sampai browser meninggalkan halaman yang memerlukan bantuan,
+        atau hingga max_wait detik (default 15 menit = 900 detik).
+        Cek setiap poll_interval detik (default 30 detik).
+
+        Return True jika pengguna berhasil menyelesaikan intervensi,
+        False jika timeout habis.
+        """
+        logger.warning("[BrowserAgent] ⚠️  Human help needed: %s", reason)
+        logger.warning(
+            "[BrowserAgent] ⏳ Menunggu hingga %d menit untuk intervensi manual. "
+            "Silakan ambil alih browser sekarang...", max_wait // 60
+        )
+
+        elapsed = 0
+        while elapsed < max_wait:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            remaining = max_wait - elapsed
+
+            # Cek apakah browser sudah meninggalkan halaman login/captcha
+            try:
+                check = self.execute_task(
+                    "Lihat URL halaman yang sedang terbuka sekarang. "
+                    "Apakah halaman ini adalah dashboard/beranda akun (bukan halaman login "
+                    "atau captcha)? Jawab hanya 'YES' atau 'NO'.",
+                    max_steps=3
+                )
+                if "YES" in check.upper():
+                    logger.info(
+                        "[BrowserAgent] ✅ Intervensi selesai setelah %ds. Melanjutkan...",
+                        elapsed
+                    )
+                    return True
+            except Exception:
+                pass
+
+            if remaining > 0:
+                logger.info(
+                    "[BrowserAgent] ⏳ Masih menunggu intervensi manual... "
+                    "Sisa waktu: %d detik (%d menit).", remaining, remaining // 60
+                )
+
+        logger.error(
+            "[BrowserAgent] ⌛ Timeout %d menit habis. "
+            "Intervensi manual tidak terdeteksi.", max_wait // 60
+        )
+        return False
 
     def set_agent_state(self, state: str, message: str = ""):
         """Compatibility stub — tidak diperlukan di Browser-Use mode."""
