@@ -53,16 +53,19 @@ class ErrorLearningSystem:
                     last_updated DATETIME
                 )
             """)
-            # Migration: tambah kolom last_updated jika tabel lama dibuat tanpa kolom ini
-            # SQLite tidak punya IF NOT EXISTS untuk ADD COLUMN, jadi pakai try/except
-            # Referensi: https://www.sqlite.org/lang_altertable.html
-            try:
+            # Migration: tambah kolom last_updated jika tabel dibuat versi lama (tanpa kolom ini).
+            # Gunakan PRAGMA table_info (lebih reliable dari try/except ALTER TABLE)
+            # karena PRAGMA tidak bergantung pada pesan error yang bisa berubah antar versi SQLite.
+            # Referensi: https://www.sqlite.org/pragma.html#pragma_table_info
+            existing_cols = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(recovery_strategies)")
+            }
+            if "last_updated" not in existing_cols:
                 conn.execute(
                     "ALTER TABLE recovery_strategies ADD COLUMN last_updated DATETIME"
                 )
-                logger.info("[ErrorLearning] Migrasi: kolom last_updated ditambahkan.")
-            except sqlite3.OperationalError:
-                pass
+                logger.info("[ErrorLearning] Migrasi: kolom last_updated berhasil ditambahkan.")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS platform_health (
                     platform TEXT PRIMARY KEY,

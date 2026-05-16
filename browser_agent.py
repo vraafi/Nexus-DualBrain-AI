@@ -12,10 +12,20 @@ Serialization fix:
   https://github.com/browser-use/browser-use/issues/3718
   https://github.com/browser-use/browser-use/issues/2840
 
-Model fix:
-  Menggunakan model dari llm_config.py (bukan hardcode gemini-2.0-flash).
-  Browser-use memakai DEFAULT_LLM_MODEL (gemma-4-31b-it) sebagai utama,
-  fallback ke NEGOTIATION_MODEL (gemma-4-26b-a4b-it) jika gagal.
+Gemma IT fix (v2):
+  Root cause: browser-use memanggil with_structured_output() → AgentOutput
+  parser gagal karena Gemma IT mengembalikan raw JSON string (bukan tool call).
+  Error yang muncul: "❌ Result failed X/6 times: items"
+
+  Solusi yang BENAR (dikonfirmasi komunitas browser-use, issue #1237 & #1458):
+  Monkey-patch convert_input_messages() agar Gemma IT mendapat path yang sama
+  dengan DeepSeek (non-function-calling: convert + merge messages).
+  Referensi: https://github.com/browser-use/browser-use/issues/1237
+             https://github.com/browser-use/browser-use/issues/1458
+
+  Patch ini diterapkan SEKALI di level modul sebelum Agent dibuat,
+  sehingga semua task browser otomatis mendapat fix tanpa modifikasi
+  file instalasi browser-use.
 """
 import asyncio
 import gc
@@ -38,6 +48,68 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from llm_config import DEFAULT_LLM_MODEL, NEGOTIATION_MODEL, FALLBACK_MODEL
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GEMMA IT PATCH — diterapkan saat modul pertama kali diimport.
+#
+# Masalah: browser-use v0.12.x tidak mengenali Gemma IT sebagai model yang
+# membutuhkan "non-function-calling path". Akibatnya pesan dikirim apa adanya
+# ke API, Gemma mengembalikan raw JSON (bukan tool call), dan parser browser-use
+# gagal mem-parse AgentOutput → error "items" di setiap step.
+#
+# Fix: patch convert_input_messages() agar Gemma IT diperlakukan sama dengan
+# DeepSeek (convert ke HumanMessage/AIMessage + merge pesan berurutan).
+# Ini mencegah browser-use mengirim system message dan tool binding ke Gemma.
+#
+# Sumber:
+#   https://github.com/browser-use/browser-use/issues/1237 (Gemma IT support)
+#   https://github.com/browser-use/browser-use/issues/1458 (AgentOutput mapping)
+# ─────────────────────────────────────────────────────────────────────────────
+def _apply_gemma_patch():
+    """
+    Monkey-patch browser-use agar Gemma IT models mendapat non-function-calling
+    message path. Patch ini aman — hanya menambah kondisi baru, tidak mengubah
+    perilaku untuk model lain.
+    """
+    try:
+        import browser_use.agent.message_manager.utils as _bu_utils
+        from langchain_core.messages import HumanMessage, AIMessage
+
+        _original_convert = _bu_utils.convert_input_messages
+
+        def _patched_convert(input_messages, model_name):
+            if (
+                model_name
+                and "gemma" in model_name.lower()
+                and "-it" in model_name.lower()
+            ):
+                converted = _bu_utils._convert_messages_for_non_function_calling_models(
+                    input_messages
+                )
+                merged = _bu_utils._merge_successive_messages(converted, HumanMessage)
+                merged = _bu_utils._merge_successive_messages(merged, AIMessage)
+                return merged
+            return _original_convert(input_messages, model_name)
+
+        _bu_utils.convert_input_messages = _patched_convert
+        logger.info(
+            "[BrowserAgent] ✅ Gemma IT patch berhasil diterapkan ke browser-use "
+            "message converter. Gemma IT akan pakai non-function-calling path."
+        )
+    except AttributeError as e:
+        logger.warning(
+            "[BrowserAgent] Gemma IT patch: fungsi helper tidak ditemukan (%s). "
+            "Versi browser-use mungkin berbeda — cek issue #1237.", e
+        )
+    except Exception as e:
+        logger.warning(
+            "[BrowserAgent] Gemma IT patch tidak bisa diterapkan: %s. "
+            "Browser task mungkin masih gagal dengan Gemma.", e
+        )
+
+
+_apply_gemma_patch()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GLOBAL SINGLETON — satu lock + satu browser untuk seluruh proses.
@@ -331,26 +403,27 @@ class BrowserAgent:
         self._headless = headless
         self.logger = logging.getLogger(__name__)
 
-        # PENTING: Browser-use WAJIB menggunakan model Gemini — BUKAN Gemma.
-        # Gemma tidak mendukung with_structured_output() yang dipakai browser-use
-        # untuk mem-parse AgentOutput (action list). Hasilnya: "items" parse error
-        # pada SETIAP step, meskipun navigasi berhasil.
+        # Model untuk browser-use: Gemma IT bisa dipakai setelah Gemma IT patch
+        # diterapkan di level modul (lihat _apply_gemma_patch() di atas).
         #
-        # Bug ini terdokumentasi dan dikonfirmasi oleh ribuan pengguna browser-use:
-        # https://github.com/browser-use/browser-use/issues/3534
-        # https://github.com/browser-use/browser-use/issues/447
-        # https://github.com/browser-use/browser-use/issues/2134
+        # Patch mengubah convert_input_messages() agar Gemma IT mendapat
+        # non-function-calling path → AgentOutput di-parse dari raw JSON string,
+        # bukan tool call → error "items" tidak muncul lagi.
         #
-        # Fix: gunakan FALLBACK_MODEL (gemini) untuk semua browser task.
-        # DEFAULT_LLM_MODEL dan NEGOTIATION_MODEL (Gemma) hanya untuk generate_content biasa.
+        # Referensi patch:
+        #   https://github.com/browser-use/browser-use/issues/1237
+        #   https://github.com/browser-use/browser-use/issues/1458
+        #
+        # Attempt 1-2: DEFAULT_LLM_MODEL (gemma-4-31b-it) — terkuat, 1500 RPD
+        # Attempt 3  : NEGOTIATION_MODEL (gemma-4-26b-a4b-it) — fallback ringan
         gemini_key = os.environ.get("GEMINI_KEY_1", "")
         self._bu_llm = GeminiForBrowserUse(
-            model=FALLBACK_MODEL,
+            model=DEFAULT_LLM_MODEL,
             api_key=SecretStr(gemini_key) if gemini_key else None,
             temperature=0.1,
         )
         self._bu_llm_fallback = GeminiForBrowserUse(
-            model=FALLBACK_MODEL,
+            model=NEGOTIATION_MODEL,
             api_key=SecretStr(gemini_key) if gemini_key else None,
             temperature=0.3,
         )
