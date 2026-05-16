@@ -66,6 +66,19 @@ class ErrorLearningSystem:
                     "ALTER TABLE recovery_strategies ADD COLUMN last_updated DATETIME"
                 )
                 logger.info("[ErrorLearning] Migrasi: kolom last_updated berhasil ditambahkan.")
+            # Trigger: update last_updated otomatis saat baris diubah.
+            # Ini memastikan timestamp selalu akurat tanpa perlu set manual di setiap UPDATE.
+            # Referensi: https://www.sqlite.org/lang_createtrigger.html
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS update_recovery_strategies_last_updated
+                AFTER UPDATE ON recovery_strategies
+                FOR EACH ROW
+                BEGIN
+                    UPDATE recovery_strategies
+                    SET last_updated = CURRENT_TIMESTAMP
+                    WHERE error_type = NEW.error_type;
+                END
+            """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS platform_health (
                     platform TEXT PRIMARY KEY,

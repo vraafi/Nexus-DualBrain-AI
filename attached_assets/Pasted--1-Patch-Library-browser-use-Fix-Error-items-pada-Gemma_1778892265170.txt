@@ -1,0 +1,87 @@
+### 1. Patch Library `browser-use` (Fix Error "items" pada Gemma IT)
+
+**Akar Masalah:**
+Model Gemma Instruction-Tuned (IT) saat ini belum memiliki dukungan stabil untuk *native function calling* standar OpenAI dalam *pipeline* `browser-use`. Framework mencoba memaksa skema parameter API (`tools`), yang menyebabkan model merespons dengan format yang salah atau gagal diurai, sehingga memunculkan *error* validasi `items` pada Pydantic di setiap langkah.
+
+**Solusi Resolusi:**
+Anda harus menambahkan `gemma` ke dalam daftar pengecekan model *non-function-calling*. Ini akan memaksa `browser-use` untuk secara otomatis mengirimkan instruksi format JSON mentah ke dalam *system prompt* alih-alih memanggil parameter `tools` API.
+
+Buka file sumber `browser-use` (umumnya berada pada rute `browser_use/agent/agent.py` atau file utilitas yang menangani inisialisasi *Large Language Model*) dan terapkan modifikasi penuh berikut:
+
+```python
+    def _is_non_function_calling_model(self) -> bool:
+        """
+        Menentukan apakah model saat ini memerlukan mode JSON text-parsing 
+        sebagai pengganti native function calling.
+        """
+        if not hasattr(self.model, 'model_name'):
+            return False
+            
+        model_name = self.model.model_name.lower()
+        
+        # Tambahkan 'gemma' ke dalam array definisi fallback model
+        non_fc_models = [
+            'deepseek-r1', 
+            'qwen', 
+            'gemma', 
+            'gemma-it'
+        ] 
+        
+        return any(m in model_name for m in non_fc_models)
+
+```
+
+---
+
+### 2. Fix Database Schema (`recovery_strategies`)
+
+**Akar Masalah:**
+Hilangnya kolom referensi temporal `last_updated` membuat mekanisme sinkronisasi atau pelacakan rekam jejak modifikasi baris gagal berfungsi.
+
+**Solusi Resolusi:**
+Eksekusi *Data Definition Language* (DDL) berikut sesuai dengan mesin basis data yang Anda gunakan. Kode ini tidak disingkat dan mengimplementasikan mekanisme pembaruan stempel waktu secara otomatis.
+
+**PostgreSQL:**
+
+```sql
+ALTER TABLE recovery_strategies 
+ADD COLUMN last_updated TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+
+CREATE OR REPLACE FUNCTION update_modified_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.last_updated = now();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_recovery_strategies_modtime
+BEFORE UPDATE ON recovery_strategies
+FOR EACH ROW EXECUTE PROCEDURE update_modified_column();
+
+```
+
+**MySQL / MariaDB:**
+
+```sql
+ALTER TABLE recovery_strategies 
+ADD COLUMN last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+
+```
+
+**SQLite:**
+
+```sql
+ALTER TABLE recovery_strategies 
+ADD COLUMN last_updated DATETIME DEFAULT CURRENT_TIMESTAMP;
+
+CREATE TRIGGER update_recovery_strategies_last_updated
+AFTER UPDATE ON recovery_strategies
+FOR EACH ROW
+BEGIN
+    UPDATE recovery_strategies 
+    SET last_updated = CURRENT_TIMESTAMP 
+    WHERE id = NEW.id;
+END;
+
+```

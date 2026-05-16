@@ -68,10 +68,58 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 def _apply_gemma_patch():
     """
-    Monkey-patch browser-use agar Gemma IT models mendapat non-function-calling
-    message path. Patch ini aman — hanya menambah kondisi baru, tidak mengubah
-    perilaku untuk model lain.
+    Dua-lapis monkey-patch browser-use untuk Gemma IT models.
+
+    Lapis 1 — agent.py (_is_non_function_calling_model):
+      browser-use menggunakan method ini untuk memutuskan apakah perlu
+      mengirim schema tools ke LLM atau cukup raw JSON prompt.
+      Gemma IT harus masuk daftar non-function-calling agar tidak ada
+      tool binding yang dikirim ke API Google AI Studio.
+      Referensi: browser-use/agent/agent.py (versi 0.12.x)
+
+    Lapis 2 — message_manager/utils.py (convert_input_messages):
+      Bahkan jika Lapis 1 sudah aktif, pesan perlu dikonversi ke format
+      HumanMessage/AIMessage dan di-merge agar Gemma IT tidak menerima
+      system message atau pesan berurutan dengan role yang sama.
+      Referensi: https://github.com/browser-use/browser-use/issues/1237
+                 https://github.com/browser-use/browser-use/issues/1458
+
+    Kedua patch bersifat additive (tidak mengubah perilaku model lain)
+    dan diterapkan satu kali saat modul ini pertama kali diimport.
     """
+    _NON_FC_KEYWORDS = ("deepseek-r1", "qwen", "gemma")
+
+    # ── LAPIS 1: Patch _is_non_function_calling_model di Agent class ─────────
+    # Beberapa versi browser-use menaruh logika ini langsung di Agent.
+    # Patch ini mengoverride method tersebut agar 'gemma' selalu dikenali.
+    try:
+        from browser_use.agent.agent import Agent as _BUAgent
+
+        def _patched_is_non_fc(self) -> bool:
+            model_obj = getattr(self, "model", None) or getattr(self, "llm", None)
+            if model_obj is None:
+                return False
+            name = (
+                getattr(model_obj, "model_name", None)
+                or getattr(model_obj, "model", None)
+                or ""
+            ).lower()
+            return any(kw in name for kw in _NON_FC_KEYWORDS)
+
+        _BUAgent._is_non_function_calling_model = _patched_is_non_fc
+        logger.info(
+            "[BrowserAgent] ✅ Lapis 1 patch: Agent._is_non_function_calling_model "
+            "diperbarui — 'gemma' dikenali sebagai non-function-calling model."
+        )
+    except Exception as e:
+        logger.warning(
+            "[BrowserAgent] Lapis 1 patch (agent.py) tidak bisa diterapkan: %s. "
+            "Lapis 2 tetap aktif sebagai fallback.", e
+        )
+
+    # ── LAPIS 2: Patch convert_input_messages di message_manager/utils.py ────
+    # Pastikan pesan dikonversi ke format HumanMessage/AIMessage dan di-merge
+    # sebelum dikirim ke Gemma IT, terlepas dari hasil Lapis 1.
     try:
         import browser_use.agent.message_manager.utils as _bu_utils
         from langchain_core.messages import HumanMessage, AIMessage
@@ -79,11 +127,7 @@ def _apply_gemma_patch():
         _original_convert = _bu_utils.convert_input_messages
 
         def _patched_convert(input_messages, model_name):
-            if (
-                model_name
-                and "gemma" in model_name.lower()
-                and "-it" in model_name.lower()
-            ):
+            if model_name and any(kw in model_name.lower() for kw in _NON_FC_KEYWORDS):
                 converted = _bu_utils._convert_messages_for_non_function_calling_models(
                     input_messages
                 )
@@ -94,18 +138,17 @@ def _apply_gemma_patch():
 
         _bu_utils.convert_input_messages = _patched_convert
         logger.info(
-            "[BrowserAgent] ✅ Gemma IT patch berhasil diterapkan ke browser-use "
-            "message converter. Gemma IT akan pakai non-function-calling path."
+            "[BrowserAgent] ✅ Lapis 2 patch: convert_input_messages diperbarui "
+            "— Gemma IT memakai non-function-calling message path."
         )
     except AttributeError as e:
         logger.warning(
-            "[BrowserAgent] Gemma IT patch: fungsi helper tidak ditemukan (%s). "
-            "Versi browser-use mungkin berbeda — cek issue #1237.", e
+            "[BrowserAgent] Lapis 2 patch: helper tidak ditemukan (%s). "
+            "Cek versi browser-use di requirements.txt.", e
         )
     except Exception as e:
         logger.warning(
-            "[BrowserAgent] Gemma IT patch tidak bisa diterapkan: %s. "
-            "Browser task mungkin masih gagal dengan Gemma.", e
+            "[BrowserAgent] Lapis 2 patch (utils.py) tidak bisa diterapkan: %s.", e
         )
 
 
