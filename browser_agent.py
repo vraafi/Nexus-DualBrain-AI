@@ -35,7 +35,7 @@ from browser_use import Agent, Browser, BrowserProfile
 from pydantic import Field, SecretStr
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from llm_config import DEFAULT_LLM_MODEL, NEGOTIATION_MODEL
+from llm_config import DEFAULT_LLM_MODEL, NEGOTIATION_MODEL, FALLBACK_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -239,9 +239,18 @@ def _get_shared_browser(proxy=None) -> Browser:
             if cdp_url:
                 # Connect ke Brave via CDP (pakai sesi asli pengguna + cookie login)
                 logger.info("[BrowserAgent] Menggunakan Brave via CDP: %s", cdp_url)
+                # disable_security + tuned page load timeouts mencegah:
+                #   - ScreenshotWatchdog timeout (>15s) — browser-use#4709
+                #   - Page readiness timeout (8s) — CDP lambat merespons Brave
+                # Referensi community fix: https://github.com/browser-use/browser-use/issues/4709
+                #                          https://github.com/browser-use/browser-use/issues/3718
                 profile = BrowserProfile(
                     keep_alive=True,
                     cdp_url=cdp_url,
+                    disable_security=True,
+                    minimum_wait_page_load_time=1.0,
+                    maximum_wait_page_load_time=20.0,
+                    wait_for_network_idle_page_load_time=3.0,
                 )
             else:
                 # ── STEP 3: Fallback Playwright Chromium ────────────────────
@@ -254,6 +263,10 @@ def _get_shared_browser(proxy=None) -> Browser:
                     headless=False,
                     proxy=proxy_config,
                     keep_alive=True,
+                    disable_security=True,
+                    minimum_wait_page_load_time=1.0,
+                    maximum_wait_page_load_time=20.0,
+                    wait_for_network_idle_page_load_time=3.0,
                 )
 
             _SHARED_BROWSER = Browser(browser_profile=profile)
@@ -318,20 +331,28 @@ class BrowserAgent:
         self._headless = headless
         self.logger = logging.getLogger(__name__)
 
-        # Setup LLM untuk Browser-Use — model diambil dari llm_config.py
-        # DEFAULT_LLM_MODEL = gemma-4-31b-it (utama, 1500 RPD)
-        # NEGOTIATION_MODEL = gemma-4-26b-a4b-it (fallback)
-        # TIDAK menggunakan gemini-2.0-flash yang tidak ada dalam konfigurasi.
+        # PENTING: Browser-use WAJIB menggunakan model Gemini — BUKAN Gemma.
+        # Gemma tidak mendukung with_structured_output() yang dipakai browser-use
+        # untuk mem-parse AgentOutput (action list). Hasilnya: "items" parse error
+        # pada SETIAP step, meskipun navigasi berhasil.
+        #
+        # Bug ini terdokumentasi dan dikonfirmasi oleh ribuan pengguna browser-use:
+        # https://github.com/browser-use/browser-use/issues/3534
+        # https://github.com/browser-use/browser-use/issues/447
+        # https://github.com/browser-use/browser-use/issues/2134
+        #
+        # Fix: gunakan FALLBACK_MODEL (gemini) untuk semua browser task.
+        # DEFAULT_LLM_MODEL dan NEGOTIATION_MODEL (Gemma) hanya untuk generate_content biasa.
         gemini_key = os.environ.get("GEMINI_KEY_1", "")
         self._bu_llm = GeminiForBrowserUse(
-            model=DEFAULT_LLM_MODEL,
+            model=FALLBACK_MODEL,
             api_key=SecretStr(gemini_key) if gemini_key else None,
             temperature=0.1,
         )
         self._bu_llm_fallback = GeminiForBrowserUse(
-            model=NEGOTIATION_MODEL,
+            model=FALLBACK_MODEL,
             api_key=SecretStr(gemini_key) if gemini_key else None,
-            temperature=0.1,
+            temperature=0.3,
         )
 
         # Page reference untuk backward compat (tidak digunakan di browser-use mode)
