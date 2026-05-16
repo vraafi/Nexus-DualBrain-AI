@@ -227,6 +227,66 @@ def verify_patches(bu_root: Path):
             print(f"  {path.name}: {status}")
 
 
+def diagnose(bu_root: Path):
+    """
+    Tampilkan diagnostik struktur browser-use yang terinstall.
+    Berguna untuk debug ketika patch gagal karena versi berbeda.
+    """
+    print(c("bold", "\nDiagnostik struktur browser-use:"))
+    print(f"  Root: {bu_root}")
+    print()
+
+    # Tampilkan file utama yang relevan
+    key_files = [
+        "agent/__init__.py",
+        "agent/agent.py",
+        "agent.py",
+        "agent/message_manager/__init__.py",
+        "agent/message_manager/utils.py",
+        "agent/message_manager/service.py",
+        "agent/utils.py",
+        "utils.py",
+    ]
+    print(c("info", "  File relevan:"))
+    for rel in key_files:
+        path = bu_root / rel
+        status = c("ok", "✅ ADA") if path.exists() else c("warn", "❌ tidak ada")
+        print(f"    {rel}: {status}")
+
+    # Tampilkan isi utils.py jika ada
+    print()
+    utils_candidates = [
+        bu_root / "agent" / "message_manager" / "utils.py",
+        bu_root / "agent" / "utils.py",
+        bu_root / "utils.py",
+    ]
+    for utils_path in utils_candidates:
+        if utils_path.exists():
+            print(c("info", f"  Fungsi di {utils_path.name}:"))
+            try:
+                import ast
+                tree = ast.parse(utils_path.read_text(encoding="utf-8"))
+                fns = [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+                for fn in fns:
+                    marker = c("ok", "  ← target patch") if "convert" in fn.lower() else ""
+                    print(f"    def {fn}(){marker}")
+            except Exception as e:
+                print(c("warn", f"    (gagal parse: {e})"))
+            print()
+            break
+
+    # Cek apakah Agent punya _is_non_function_calling_model
+    print(c("info", "  Cek Agent._is_non_function_calling_model:"))
+    try:
+        from browser_use import Agent as _TmpAgent
+        if hasattr(_TmpAgent, "_is_non_function_calling_model"):
+            print(c("ok", "    ✅ method ada — Lapis 1 monkey-patch bisa diterapkan"))
+        else:
+            print(c("warn", "    ⚠ method tidak ditemukan — Lapis 1 mungkin tidak efektif"))
+    except Exception as e:
+        print(c("err", f"    ❌ gagal import Agent: {e}"))
+
+
 def main():
     print(c("bold", "\n" + "=" * 60))
     print(c("bold", " Nexus DualBrain AI — browser-use Gemma IT Patcher"))
@@ -240,7 +300,10 @@ def main():
         print(c("err", f"\n❌ {e}"))
         sys.exit(1)
 
-    print(c("bold", "Menerapkan patch...\n"))
+    # Selalu tampilkan diagnostik dulu
+    diagnose(bu_root)
+
+    print(c("bold", "\nMenerapkan patch...\n"))
 
     r1 = patch_agent_py(bu_root)
     r2 = patch_utils_py(bu_root)
@@ -253,14 +316,13 @@ def main():
         print(c("info", "\nLog yang menandakan berhasil saat main.py dijalankan:"))
         print('  INFO [browser_agent] ✅ Lapis 1 patch: Agent._is_non_function_calling_model ...')
         print('  INFO [browser_agent] ✅ Lapis 2 patch: convert_input_messages diperbarui ...')
-        print(c("info", "\nJika patch tidak menyelesaikan masalah, jalankan:"))
-        print("  pip install --upgrade browser-use")
-        print("  python3 patch_browser_use.py")
+        print(c("info", "\nNote: Jika Lapis 2 skip (fungsi tidak ditemukan), Lapis 1 sudah cukup."))
     else:
-        print(c("warn", "⚠ Tidak ada patch yang berhasil diterapkan."))
-        print(c("info", "Coba langkah manual:"))
-        print("  1. pip install --upgrade browser-use")
-        print("  2. python3 patch_browser_use.py")
+        print(c("warn", "⚠ Tidak ada file yang berhasil di-patch (mungkin pola berbeda)."))
+        print(c("info", "  Tapi monkey-patch runtime di browser_agent.py tetap aktif."))
+        print(c("info", "  Lapis 1 (Agent._is_non_function_calling_model) adalah fix utama."))
+        print()
+        print(c("info", "  Lihat diagnostik di atas untuk memahami struktur versi ini."))
 
     print(c("bold", "\n" + "=" * 60 + "\n"))
 

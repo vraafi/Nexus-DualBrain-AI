@@ -90,13 +90,13 @@ def _apply_gemma_patch():
     _NON_FC_KEYWORDS = ("deepseek-r1", "qwen", "gemma")
 
     # ── LAPIS 1: Patch _is_non_function_calling_model di Agent class ─────────
-    # Beberapa versi browser-use menaruh logika ini langsung di Agent.
-    # Patch ini mengoverride method tersebut agar 'gemma' selalu dikenali.
+    # Import langsung dari browser_use (bukan browser_use.agent.agent —
+    # di v0.12.6 submodule agent.agent tidak ada, Agent ada di package root).
     try:
-        from browser_use.agent.agent import Agent as _BUAgent
+        from browser_use import Agent as _BUAgent
 
         def _patched_is_non_fc(self) -> bool:
-            model_obj = getattr(self, "model", None) or getattr(self, "llm", None)
+            model_obj = getattr(self, "llm", None) or getattr(self, "model", None)
             if model_obj is None:
                 return False
             name = (
@@ -117,38 +117,65 @@ def _apply_gemma_patch():
             "Lapis 2 tetap aktif sebagai fallback.", e
         )
 
-    # ── LAPIS 2: Patch convert_input_messages di message_manager/utils.py ────
-    # Pastikan pesan dikonversi ke format HumanMessage/AIMessage dan di-merge
-    # sebelum dikirim ke Gemma IT, terlepas dari hasil Lapis 1.
+    # ── LAPIS 2: Patch message_manager/utils.py ──────────────────────────────
+    # Di browser-use v0.12.x, fungsinya mungkin bernama berbeda tergantung versi.
+    # Kita coba beberapa nama sekaligus agar kompatibel lintas versi.
     try:
         import browser_use.agent.message_manager.utils as _bu_utils
         from langchain_core.messages import HumanMessage, AIMessage
 
-        _original_convert = _bu_utils.convert_input_messages
-
-        def _patched_convert(input_messages, model_name):
-            if model_name and any(kw in model_name.lower() for kw in _NON_FC_KEYWORDS):
-                converted = _bu_utils._convert_messages_for_non_function_calling_models(
-                    input_messages
-                )
-                merged = _bu_utils._merge_successive_messages(converted, HumanMessage)
-                merged = _bu_utils._merge_successive_messages(merged, AIMessage)
-                return merged
-            return _original_convert(input_messages, model_name)
-
-        _bu_utils.convert_input_messages = _patched_convert
-        logger.info(
-            "[BrowserAgent] ✅ Lapis 2 patch: convert_input_messages diperbarui "
-            "— Gemma IT memakai non-function-calling message path."
+        # Cari fungsi konversi yang tersedia di modul ini
+        _convert_fn = (
+            getattr(_bu_utils, "convert_input_messages", None)
+            or getattr(_bu_utils, "_convert_input_messages", None)
         )
-    except AttributeError as e:
+        _non_fc_fn = (
+            getattr(_bu_utils, "_convert_messages_for_non_function_calling_models", None)
+            or getattr(_bu_utils, "convert_messages_for_non_function_calling_models", None)
+        )
+        _merge_fn = (
+            getattr(_bu_utils, "_merge_successive_messages", None)
+            or getattr(_bu_utils, "merge_successive_messages", None)
+        )
+
+        if _convert_fn and _non_fc_fn and _merge_fn:
+            _original_convert = _convert_fn
+
+            def _patched_convert(input_messages, model_name):
+                if model_name and any(kw in model_name.lower() for kw in _NON_FC_KEYWORDS):
+                    converted = _non_fc_fn(input_messages)
+                    merged = _merge_fn(converted, HumanMessage)
+                    merged = _merge_fn(merged, AIMessage)
+                    return merged
+                return _original_convert(input_messages, model_name)
+
+            # Pasang patch ke nama yang ditemukan
+            fn_name = "convert_input_messages"
+            if not hasattr(_bu_utils, fn_name):
+                fn_name = "_convert_input_messages"
+            setattr(_bu_utils, fn_name, _patched_convert)
+            logger.info(
+                "[BrowserAgent] ✅ Lapis 2 patch: %s diperbarui "
+                "— Gemma IT memakai non-function-calling message path.", fn_name
+            )
+        else:
+            available = [n for n in dir(_bu_utils) if not n.startswith("__")]
+            logger.warning(
+                "[BrowserAgent] Lapis 2 patch: fungsi konversi tidak ditemukan "
+                "di utils. Tersedia: %s", available[:15]
+            )
+            logger.info(
+                "[BrowserAgent] Lapis 1 (Agent._is_non_function_calling_model) "
+                "menjadi fix utama. Lapis 2 skip."
+            )
+    except ImportError:
         logger.warning(
-            "[BrowserAgent] Lapis 2 patch: helper tidak ditemukan (%s). "
-            "Cek versi browser-use di requirements.txt.", e
+            "[BrowserAgent] Lapis 2 patch: browser_use.agent.message_manager.utils "
+            "tidak ditemukan — skip, Lapis 1 tetap aktif."
         )
     except Exception as e:
         logger.warning(
-            "[BrowserAgent] Lapis 2 patch (utils.py) tidak bisa diterapkan: %s.", e
+            "[BrowserAgent] Lapis 2 patch tidak bisa diterapkan: %s.", e
         )
 
 
@@ -649,57 +676,71 @@ class BrowserAgent:
         self.navigate("https://www.google.com")
 
     def request_human_help(self, reason: str = "Butuh bantuan",
-                           max_wait: int = 900, poll_interval: int = 30) -> bool:
+                           max_wait: int = 900, poll_interval: int = 60,
+                           hermes_agent=None, notify_message: str = None) -> bool:
         """
         Request human intervention untuk CAPTCHA/2FA/login manual.
 
-        Menunggu sampai browser meninggalkan halaman yang memerlukan bantuan,
-        atau hingga max_wait detik (default 15 menit = 900 detik).
-        Cek setiap poll_interval detik (default 30 detik).
+        PERBAIKAN KRITIS:
+          Versi lama memanggil execute_task() setiap poll_interval detik untuk
+          mengecek apakah human sudah selesai. Ini menyebabkan agent MEREBUT
+          kembali browser dari pengguna setiap 30 detik — login manual jadi
+          tidak mungkin dilakukan!
 
-        Return True jika pengguna berhasil menyelesaikan intervensi,
-        False jika timeout habis.
+          Versi baru: browser DIBEBASKAN sepenuhnya selama max_wait detik.
+          Tidak ada polling browser sama sekali. Pengguna bisa login manual
+          tanpa gangguan. Setelah waktu habis, caller bertanggung jawab
+          melakukan verifikasi (misalnya _is_upwork_logged_in()).
+
+        Urutan notifikasi:
+          1. Kirim pesan Telegram LANGSUNG saat dipanggil (jika hermes_agent ada)
+          2. Tunggu max_wait detik tanpa menyentuh browser
+          3. Return True — caller harus verifikasi hasilnya
+
+        Args:
+            reason: Alasan bantuan dibutuhkan (untuk log)
+            max_wait: Waktu tunggu dalam detik (default 15 menit)
+            poll_interval: Tidak digunakan lagi (dipertahankan untuk backward compat)
+            hermes_agent: Instance HermesAgent untuk kirim notifikasi Telegram
+            notify_message: Pesan custom untuk Telegram (opsional)
         """
         logger.warning("[BrowserAgent] ⚠️  Human help needed: %s", reason)
         logger.warning(
-            "[BrowserAgent] ⏳ Menunggu hingga %d menit untuk intervensi manual. "
-            "Silakan ambil alih browser sekarang...", max_wait // 60
+            "[BrowserAgent] ⏳ Membebaskan browser selama %d menit. "
+            "Silakan login manual di browser sekarang!", max_wait // 60
         )
 
-        elapsed = 0
-        while elapsed < max_wait:
-            time.sleep(poll_interval)
-            elapsed += poll_interval
-            remaining = max_wait - elapsed
-
-            # Cek apakah browser sudah meninggalkan halaman login/captcha
+        # ── Kirim notifikasi Telegram SEGERA ────────────────────────────────
+        if hermes_agent is not None:
+            msg = notify_message or (
+                f"🔐 *Bantuan Login Dibutuhkan!*\n\n"
+                f"Alasan: {reason}\n\n"
+                f"Silakan login manual di browser Brave sekarang.\n"
+                f"Browser sudah dibebaskan — agent tidak akan mengganggu "
+                f"selama *{max_wait // 60} menit*.\n\n"
+                f"Setelah login, agent akan melanjutkan otomatis."
+            )
             try:
-                check = self.execute_task(
-                    "Lihat URL halaman yang sedang terbuka sekarang. "
-                    "Apakah halaman ini adalah dashboard/beranda akun (bukan halaman login "
-                    "atau captcha)? Jawab hanya 'YES' atau 'NO'.",
-                    max_steps=2
-                )
-                if "YES" in check.upper():
-                    logger.info(
-                        "[BrowserAgent] ✅ Intervensi selesai setelah %ds. Melanjutkan...",
-                        elapsed
-                    )
-                    return True
-            except Exception:
-                pass
-
-            if remaining > 0:
-                logger.info(
-                    "[BrowserAgent] ⏳ Masih menunggu intervensi manual... "
-                    "Sisa waktu: %d detik (%d menit).", remaining, remaining // 60
+                hermes_agent.send_message(msg)
+                logger.info("[BrowserAgent] ✅ Notifikasi Telegram terkirim.")
+            except Exception as tg_err:
+                logger.warning(
+                    "[BrowserAgent] Gagal kirim Telegram: %s", tg_err
                 )
 
-        logger.error(
-            "[BrowserAgent] ⌛ Timeout %d menit habis. "
-            "Intervensi manual tidak terdeteksi.", max_wait // 60
+        # ── Tunggu tanpa menyentuh browser ──────────────────────────────────
+        # Browser sepenuhnya bebas untuk digunakan manual oleh pengguna.
+        logger.info(
+            "[BrowserAgent] 🔓 Browser bebas. Menunggu %d menit "
+            "(agent tidak akan merebut browser selama periode ini).", max_wait // 60
         )
-        return False
+        time.sleep(max_wait)
+
+        logger.info(
+            "[BrowserAgent] ⏰ Waktu tunggu %d menit selesai. "
+            "Menyerahkan kontrol ke caller untuk verifikasi.", max_wait // 60
+        )
+        return True
 
     def set_agent_state(self, state: str, message: str = ""):
         """Compatibility stub — tidak diperlukan di Browser-Use mode."""

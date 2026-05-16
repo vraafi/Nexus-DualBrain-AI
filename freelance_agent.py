@@ -20,10 +20,11 @@ from difficulty_classifier import DifficultyClassifier
 
 
 class FreelanceAgent:
-    def __init__(self, browser_agent: BrowserAgent, llm_client):
+    def __init__(self, browser_agent: BrowserAgent, llm_client, hermes_agent=None):
         self.browser = browser_agent
         self.llm = llm_client
         self.identity = IdentityManager()
+        self.hermes = hermes_agent
         self.logger = logging.getLogger(__name__)
 
     def _is_upwork_logged_in(self) -> bool:
@@ -75,24 +76,31 @@ class FreelanceAgent:
             max_steps=10
         )
 
-        # Jika agent mendeteksi perlu bantuan manusia (CAPTCHA/2FA)
+        # Jika agent mendeteksi perlu bantuan manusia (CAPTCHA/2FA/browser error)
         if "NEEDS_HUMAN" in result or "FAILED" in result:
             self.logger.warning(
-                "Login Upwork memerlukan intervensi manual (CAPTCHA/2FA/perubahan halaman). "
-                "Silakan login manual di browser."
+                "Login Upwork memerlukan intervensi manual. "
+                "Browser dibebaskan — silakan login di Brave sekarang."
             )
-            # Tunggu hingga 15 menit sambil polling — cek setiap 30 detik
-            human_done = self.browser.request_human_help(
-                reason="Login Upwork: CAPTCHA/2FA/perubahan halaman login terdeteksi",
+            # request_human_help versi baru:
+            # - Kirim Telegram LANGSUNG (jika hermes terhubung)
+            # - Bebaskan browser sepenuhnya selama max_wait detik (TIDAK polling)
+            # - Pengguna bisa login tanpa gangguan dari agent
+            self.browser.request_human_help(
+                reason="Login Upwork: CAPTCHA/2FA/browser task gagal — login manual diperlukan",
                 max_wait=900,
-                poll_interval=30
+                hermes_agent=self.hermes,
             )
-            if human_done:
-                # Verifikasi sekali lagi setelah intervensi manual
-                if self._is_upwork_logged_in():
-                    self.logger.info("Upwork login berhasil setelah intervensi manual.")
-                    return True
-            self.logger.error("Upwork login gagal setelah menunggu intervensi manual.")
+            # Setelah waktu tunggu selesai, verifikasi apakah login berhasil
+            if self._is_upwork_logged_in():
+                self.logger.info("Upwork login berhasil setelah intervensi manual.")
+                if self.hermes:
+                    try:
+                        self.hermes.send_message("✅ Upwork login berhasil setelah intervensi manual!")
+                    except Exception:
+                        pass
+                return True
+            self.logger.error("Upwork login masih gagal setelah intervensi manual.")
             return False
 
         # Verifikasi visual setelah login otomatis (tidak bergantung teks respons agent)

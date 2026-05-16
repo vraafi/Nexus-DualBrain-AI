@@ -207,7 +207,7 @@ def run_workflow(hermes, finance, llm, branding_strategies, memory,
             save_state(task_id, "RUNNING", "inbox_monitor_phase", {})
             current_proxy = get_next_proxy(RESIDENTIAL_PROXIES)
             with BrowserAgent(headless=False, proxy=current_proxy, endpoint_url="http://localhost:9222", llm_client=llm) as browser:
-                agent = FreelanceAgent(browser, llm)
+                agent = FreelanceAgent(browser, llm, hermes_agent=hermes)
                 login_ok = agent.login_upwork()
                 # Navigasi ke halaman netral sebelum disconnect
                 # agar Brave tetap di halaman aman, bukan Upwork
@@ -216,7 +216,7 @@ def run_workflow(hermes, finance, llm, branding_strategies, memory,
             if login_ok:
                 current_proxy = get_next_proxy(RESIDENTIAL_PROXIES)
                 with BrowserAgent(headless=False, proxy=current_proxy, endpoint_url="http://localhost:9222", llm_client=llm) as browser:
-                    agent = FreelanceAgent(browser, llm)
+                    agent = FreelanceAgent(browser, llm, hermes_agent=hermes)
                     state, job_data = agent.check_messages_and_negotiate()
                     # Navigasi ke halaman netral sebelum disconnect
                     browser.navigate_to_safe_page()
@@ -550,7 +550,7 @@ def run_workflow(hermes, finance, llm, branding_strategies, memory,
             current_proxy = get_next_proxy(RESIDENTIAL_PROXIES)
             with BrowserAgent(headless=False, proxy=current_proxy, endpoint_url="http://localhost:9222") as browser:
                 if platform == "upwork":
-                    agent = FreelanceAgent(browser, llm)
+                    agent = FreelanceAgent(browser, llm, hermes_agent=hermes)
                     delivered = agent.deliver_work(job_data, code_path)
                 elif platform == "fiverr":
                     agent = FiverrAgent(browser, llm)
