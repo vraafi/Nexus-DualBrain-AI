@@ -62,25 +62,13 @@ def generate_code(job_id, title, description, platform, retry=False, feedback=""
     elif "```" in code:
         code = code.split("```")[1].strip()
 
-    # Customer repository integration using Jules CLI and Github CLI
-    # Generate repository name: py001 [c001] py
-    import subprocess
-
-
-    repo_name = f"py{job_id[-3:] if len(job_id) >= 3 else '001'} [c{job_id[:3] if len(job_id) >= 3 else '001'}] py"
-    # GitHub repository names cannot have spaces or brackets. Sanitize it for GH but keep display name.
-    gh_repo_name = repo_name.replace(" ", "-").replace("[", "").replace("]", "")
-    repo_path = os.path.join(OUTPUT_DIR, repo_name)
-
-    # Ensure the target directory exists and is empty
-    if not os.path.exists(repo_path):
-        os.makedirs(repo_path, exist_ok=True)
-
-    # Create the repository folder using jules cli
-    try:
-        subprocess.run(["jules", "repo", "create", repo_path], check=True)
-    except Exception as e:
-        logging.warning(f"Jules CLI failed: {e}. Proceeding with standard directory.")
+    # Simpan kode ke lokal, lalu push ke GitHub via REST API (tidak pakai gh CLI)
+    gh_repo_name = (
+        f"py{job_id[-3:] if len(job_id) >= 3 else '001'}-"
+        f"c{job_id[:3] if len(job_id) >= 3 else '001'}-py"
+    )
+    repo_path = os.path.join(OUTPUT_DIR, gh_repo_name)
+    os.makedirs(repo_path, exist_ok=True)
 
     code_path = os.path.join(repo_path, f"{job_id}_code.py")
     with open(code_path, "w") as f:
@@ -100,17 +88,33 @@ def generate_code(job_id, title, description, platform, retry=False, feedback=""
         json.dump(meta, f, indent=2)
 
     logging.info(f"[CodeGen] Code saved to {code_path}")
+
+    # Push ke GitHub via REST API menggunakan GITHUB_PERSONAL_ACCESS_TOKEN
+    # Tidak memerlukan gh CLI, git lokal, atau clone — langsung via Contents API
     try:
-        # Initialize a new git repository
-        subprocess.run(["git", "init"], cwd=repo_path, check=True)
-        # Try github cli to create the repository and push
-        subprocess.run(["gh", "repo", "create", gh_repo_name, "--private", "--source", ".", "--remote", "origin"],
-                       cwd=repo_path, check=True)
-        subprocess.run(["git", "add", "."], cwd=repo_path, check=True)
-        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo_path, check=True)
-        subprocess.run(["git", "push", "-u", "origin", "HEAD"], cwd=repo_path, check=True)
+        from tools.github_api import create_repo, push_multiple_files, get_authenticated_user
+
+        gh_user = get_authenticated_user()
+        owner = gh_user["login"]
+
+        create_repo(
+            name=gh_repo_name,
+            private=True,
+            auto_init=True,
+            description=f"[Nexus] {title[:80]} — {platform}"
+        )
+        push_multiple_files(
+            owner=owner,
+            repo=gh_repo_name,
+            files={
+                f"{job_id}_code.py": code,
+                f"{job_id}_meta.json": json.dumps(meta, indent=2),
+            },
+            commit_message=f"feat: codegen job {job_id} — {title[:60]}",
+        )
+        logging.info("[CodeGen] ✅ Kode berhasil di-push ke GitHub: %s/%s", owner, gh_repo_name)
     except Exception as e:
-        logging.warning(f"GitHub CLI / Git failed: {e}.")
+        logging.warning("[CodeGen] GitHub API push gagal (output lokal tetap tersedia): %s", e)
 
     print(json.dumps({"status": "success", "code_path": code_path, "meta_path": meta_path}))
     return True

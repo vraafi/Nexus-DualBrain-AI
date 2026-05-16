@@ -282,26 +282,35 @@ def run_workflow(hermes, finance, llm, branding_strategies, memory,
             if not gh_path:
                 logging.warning("[Phase 3] ⚠️ GitHub CLI (gh) tidak ditemukan di PATH! Fallback ke Gemini murni.")
 
-            if jules_path and gh_path:
+            if jules_path:
                 try:
-                    logging.info("[Phase 3] Jules CLI & GitHub CLI ditemukan di sistem. Membuat Repo Private baru...")
-
+                    from tools.github_api import (
+                        create_repo, create_issue, list_pull_requests,
+                        get_authenticated_user
+                    )
                     import re
-                    # Buat nama repo yang aman dari nama klien dan judul tugas
+
+                    logging.info("[Phase 3] Jules CLI ditemukan. Membuat Repo Private via GitHub API...")
+
+                    gh_user = get_authenticated_user()
+                    gh_owner = gh_user["login"]
+
                     client_name = job_data.get('client_username', 'client')
                     task_title = job_data.get('title', 'task')
                     safe_name = re.sub(r'[^a-zA-Z0-9-]', '-', f"job-{client_name}-{task_title}-{task_id[:4]}").lower()
-                    repo_name = safe_name[:100]  # limit panjang nama
-                    full_repo_name = f"vraafi/{repo_name}"
+                    repo_name = safe_name[:100]
+                    full_repo_name = f"{gh_owner}/{repo_name}"
 
-                    # Create private repo
-                    subprocess.run(
-                        ["gh", "repo", "create", repo_name, "--private", "--add-readme"],
-                        capture_output=True, text=True, check=False
+                    # Buat repo private via GitHub API (tidak pakai gh CLI)
+                    create_repo(
+                        name=repo_name,
+                        private=True,
+                        auto_init=True,
+                        description=f"[Nexus] {task_title[:80]}"
                     )
-                    logging.info("[Phase 3] Repo private dibuat: %s", full_repo_name)
+                    logging.info("[Phase 3] Repo private dibuat via API: %s", full_repo_name)
 
-                    # Buat GitHub Issue untuk Jules
+                    # Buat GitHub Issue via API
                     issue_body = (
                         f"Platform: {job_data.get('platform', 'unknown')}\n"
                         f"Budget: {job_data.get('budget', 'N/A')}\n\n"
@@ -315,22 +324,17 @@ def run_workflow(hermes, finance, llm, branding_strategies, memory,
                         f"- Self-contained and runnable\n\n"
                         f"## Output Path\noutput/generated/{task_id[:8]}_{timestamp}_code.py"
                     )
-                    issue_cmd = [
-                        "gh", "issue", "create",
-                        "--repo", full_repo_name,
-                        "--title", f"FREELANCE JOB: {job_data.get('title', 'Coding Task')}",
-                        "--body", issue_body,
-                        "--label", "jules,freelance-job"
-                    ]
-                    issue_result = subprocess.run(
-                        issue_cmd, capture_output=True, text=True, timeout=30
+                    issue_data = create_issue(
+                        owner=gh_owner,
+                        repo=repo_name,
+                        title=f"FREELANCE JOB: {job_data.get('title', 'Coding Task')}",
+                        body=issue_body,
+                        labels=["jules", "freelance-job"]
                     )
-                    issue_url = issue_result.stdout.strip()
-                    # Ambil nomor issue dari URL
-                    issue_num = issue_url.rstrip("/").split("/")[-1]
-                    logging.info("[Phase 3] GitHub Issue dibuat: #%s", issue_num)
+                    issue_num = str(issue_data.get("number", ""))
+                    logging.info("[Phase 3] GitHub Issue dibuat via API: #%s", issue_num)
 
-                    # Trigger Jules untuk mengerjakan issue
+                    # Trigger Jules CLI untuk mengerjakan issue
                     jules_session = (
                         f"Implement the freelance coding job described in issue #{issue_num}. "
                         f"CRITICAL: You are encouraged to spawn parallel sub-agents to divide and conquer "
@@ -351,34 +355,34 @@ def run_workflow(hermes, finance, llm, branding_strategies, memory,
                         f"Issue: #{issue_num}\nTunggu notifikasi PR (Maks 3 Jam)..."
                     )
                     jules_result = subprocess.run(
-                        jules_cmd, capture_output=True, text=True, timeout=10800  # 3 Jam
+                        jules_cmd, capture_output=True, text=True, timeout=10800
                     )
                     if jules_result.returncode != 0:
                         logging.error("[Phase 3] Jules GAGAL: %s", jules_result.stderr)
                     else:
                         logging.info("[Phase 3] Jules session terkirim. Output: %s", jules_result.stdout[:500])
 
-                    # Ambil kode dari PR Jules
-                    pr_cmd = [
-                        "gh", "pr", "list",
-                        "--repo", full_repo_name,
-                        "--label", "jules",
-                        "--state", "open",
-                        "--json", "number",
-                        "--jq", ".[0].number"
-                    ]
-                    pr_result = subprocess.run(
-                        pr_cmd, capture_output=True, text=True, timeout=30
+                    # Ambil daftar PR Jules via GitHub API (tidak pakai gh pr list)
+                    prs = list_pull_requests(
+                        owner=gh_owner,
+                        repo=repo_name,
+                        state="open",
+                        label="jules"
                     )
-                    pr_num = pr_result.stdout.strip()
-
-                    if pr_num and pr_num.isdigit():
-                        # Checkout kode dari PR
-                        subprocess.run(
-                            ["gh", "pr", "checkout", pr_num,
-                             "--repo", full_repo_name],
-                            timeout=60
-                        )
+                    if prs:
+                        pr_num = str(prs[0]["number"])
+                        pr_branch = prs[0].get("head", {}).get("ref", "")
+                        # Checkout branch PR Jules secara lokal via git (masih butuh git)
+                        if pr_branch:
+                            subprocess.run(
+                                ["git", "fetch", f"https://github.com/{full_repo_name}.git",
+                                 pr_branch],
+                                capture_output=True, timeout=60
+                            )
+                            subprocess.run(
+                                ["git", "checkout", "FETCH_HEAD"],
+                                capture_output=True, timeout=30
+                            )
                         if os.path.exists(code_path):
                             jules_ok = True
                             logging.info(
@@ -710,67 +714,49 @@ def run_coding_benchmarks(llm, hermes):
             "4. Save the code to the specified file.\n"
         )
 
-        # ── Helper: buat repo GitHub + clone/init dir lokal ─────────────────
+        # ── Helper: buat repo GitHub via API + siapkan dir lokal ────────────
         def _setup_repo(agent_label, _safe_title=safe_title, _ts=ts, _task=task):
+            from tools.github_api import create_repo, get_authenticated_user
             rname = (f"sim-{_task['level'].lower()}-{agent_label}-"
                      f"{_safe_title}-{_ts}")
-            full = f"vraafi/{rname}"
-            subprocess.run(
-                ["gh", "repo", "create", rname, "--private", "--add-readme"],
-                capture_output=True, text=True, check=False
-            )
-            logging.info("[Benchmark] Repo %s dibuat: %s", agent_label.upper(), full)
+            try:
+                gh_user = get_authenticated_user()
+                owner = gh_user["login"]
+                create_repo(name=rname, private=True, auto_init=True,
+                            description=f"[Nexus Benchmark] {agent_label} — {_task['level']}")
+                full = f"{owner}/{rname}"
+            except Exception as e:
+                logging.warning("[Benchmark] GitHub API create_repo gagal: %s", e)
+                full = f"nexus/{rname}"
+            logging.info("[Benchmark] Repo %s dibuat via API: %s", agent_label.upper(), full)
             cdir = f"temp_{rname}"
-            subprocess.run(["gh", "repo", "clone", full, cdir],
-                           capture_output=True, text=True)
-            if not os.path.isdir(cdir):
-                logging.warning("[Benchmark] Clone %s gagal. Buat dir manual...",
-                                agent_label)
-                os.makedirs(cdir, exist_ok=True)
-                subprocess.run(["git", "init"], cwd=cdir, capture_output=True)
-                subprocess.run(["git", "symbolic-ref", "HEAD", "refs/heads/main"],
-                               cwd=cdir, capture_output=True)
-                subprocess.run(["git", "config", "user.email",
-                                "nexus-agent@replit.com"],
-                               cwd=cdir, capture_output=True)
-                subprocess.run(["git", "config", "user.name", "Nexus DualBrain AI"],
-                               cwd=cdir, capture_output=True)
-                subprocess.run(
-                    ["git", "remote", "add", "origin",
-                     f"https://github.com/{full}.git"],
-                    cwd=cdir, capture_output=True
-                )
+            os.makedirs(cdir, exist_ok=True)
             return full, cdir
 
-        # ── Helper: commit + push file ke repo ──────────────────────────────
+        # ── Helper: push file ke repo via GitHub Contents API ────────────────
         def _push_to_repo(cdir, fname, level, agent_label, full_rname):
-            dest = os.path.join(cdir, fname)
-            shutil.copy(fname, dest)
-            subprocess.run(["git", "-C", cdir, "config", "user.email",
-                            "nexus-agent@replit.com"], capture_output=True)
-            subprocess.run(["git", "-C", cdir, "config", "user.name",
-                            "Nexus DualBrain AI"], capture_output=True)
-            subprocess.run(["git", "-C", cdir, "add", fname], capture_output=True)
-            subprocess.run(
-                ["git", "-C", cdir, "commit", "-m",
-                 f"feat: {agent_label} benchmark {level} — sandbox PASSED"],
-                capture_output=True, text=True
-            )
-            pr = subprocess.run(
-                ["git", "-C", cdir, "push", "--set-upstream", "origin",
-                 "HEAD:main"],
-                capture_output=True, text=True
-            )
-            if pr.returncode == 0:
-                logging.info("[Auto-Publish] ✅ %s di-push ke: %s",
+            from tools.github_api import push_file, get_authenticated_user
+            try:
+                owner, repo = full_rname.split("/", 1)
+                src = fname if os.path.isabs(fname) else os.path.join(os.getcwd(), fname)
+                with open(src, "r", errors="replace") as f:
+                    content = f.read()
+                push_file(
+                    owner=owner,
+                    repo=repo,
+                    path=os.path.basename(fname),
+                    content=content,
+                    message=f"feat: {agent_label} benchmark {level} — sandbox PASSED",
+                )
+                logging.info("[Auto-Publish] ✅ %s di-push via API ke: %s",
                              agent_label.upper(), full_rname)
                 hermes.send_message(
                     f"✅ Benchmark {level} [{agent_label.upper()}] LULUS sandbox!\n"
                     f"Repo: `{full_rname}`"
                 )
-            else:
-                logging.error("[Auto-Publish] ❌ Gagal push %s: %s",
-                              agent_label.upper(), pr.stderr[:300])
+            except Exception as e:
+                logging.error("[Auto-Publish] ❌ Gagal push %s via API: %s",
+                              agent_label.upper(), e)
 
         # ── Buat DUA repo terpisah (satu Antigravity, satu Aider) ───────────
         full_ag_repo, ag_dir = _setup_repo("antigravity")
